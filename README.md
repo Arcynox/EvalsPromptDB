@@ -4,7 +4,7 @@
   <p><strong>Local SQLite storage for versioned LLM prompts and evaluations.</strong></p>
   <p>
     <a href="https://pypi.org/project/evals-promptdb/"><img src="https://img.shields.io/pypi/v/evals-promptdb" alt="PyPI"></a>
-    <a href="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml"><img src="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml/badge.svg" alt="GitHub Actions CI status"></a>
+    <a href="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml"><img src="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml/badge.svg" alt="Test and build status"></a>
     <a href="#install"><img src="https://img.shields.io/badge/Python-3.10%2B-6d4aff" alt="Python 3.10 and later"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-27896d" alt="MIT license"></a>
   </p>
@@ -12,6 +12,8 @@
     <a href="README.es.md">Español</a> · <a href="#install">Install</a> · <a href="#quickstart-in-python">Python quickstart</a> · <a href="#quickstart-in-the-terminal">CLI quickstart</a> · <a href="#provider-examples">Providers</a>
   </p>
 </div>
+
+[Contributing](CONTRIBUTING.md) · [Roadmap](ROADMAP.md) · [Prompt improvement tutorial (Spanish)](docs/prompt-improvement.md)
 
 Keep templates, test cases, model outputs, and scores in one `.db` file. Use the Python API in your application or the CLI in scripts and CI. The core uses the Python standard library.
 
@@ -262,6 +264,8 @@ Run the test suite with the standard library.
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+The suite covers migrations, snapshots, prompt rendering, and evaluation gates. It runs offline with temporary databases. See [Contributing](CONTRIBUTING.md) for the PR workflow.
 
 GitHub Actions tests CPython 3.10–3.15 and PyPy 3.11 on Linux, CPython 3.10 and 3.15 on Windows, and CPython 3.15 on macOS. The wheel includes type annotations for consumers and has no required third-party runtime dependencies. Use the packaging tools below to build and check the distributions locally.
 

@@ -4,7 +4,7 @@
   <p><strong>Prompts de LLM versionados y evaluaciones en SQLite local.</strong></p>
   <p>
     <a href="https://pypi.org/project/evals-promptdb/"><img src="https://img.shields.io/pypi/v/evals-promptdb" alt="PyPI"></a>
-    <a href="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml"><img src="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml/badge.svg" alt="Estado de CI en GitHub Actions"></a>
+    <a href="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml"><img src="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml/badge.svg" alt="Estado de las pruebas y del build"></a>
     <a href="#instalación"><img src="https://img.shields.io/badge/Python-3.10%2B-6d4aff" alt="Python 3.10 o posterior"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/Licencia-MIT-27896d" alt="Licencia MIT"></a>
   </p>
@@ -12,6 +12,8 @@
     <a href="README.md">English</a> · <a href="#instalación">Instalación</a> · <a href="#inicio-rápido-en-python">Inicio en Python</a> · <a href="#inicio-rápido-en-la-terminal">Inicio en la CLI</a> · <a href="#ejemplos-de-proveedores">Proveedores</a>
   </p>
 </div>
+
+[Cómo contribuir](CONTRIBUTING.md) · [Hoja de ruta](ROADMAP.md) · [Tutorial de mejora de prompts](docs/prompt-improvement.md)
 
 Guardá plantillas, casos, salidas y puntuaciones en un archivo `.db`. Usá la API de Python en tu aplicación o la CLI en scripts y CI. El núcleo usa la biblioteca estándar de Python.
 
@@ -262,6 +264,8 @@ Corré las pruebas con la biblioteca estándar.
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+La suite cubre migraciones, snapshots, renderizado de prompts y controles de evaluación. Se ejecuta sin conexión con bases temporales. Consultá la [guía para contribuir](CONTRIBUTING.md) para abrir un PR.
 
 GitHub Actions ejecuta pruebas en CPython 3.10 a 3.15 y PyPy 3.11 en Linux, CPython 3.10 y 3.15 en Windows, y CPython 3.15 en macOS. El wheel incluye anotaciones de tipos y funciona sin dependencias externas obligatorias. Usá estas herramientas para construir y revisar las distribuciones en local.
 
