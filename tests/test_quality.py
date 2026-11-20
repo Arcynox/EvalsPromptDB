@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from promptdb import PromptDB
+from promptdb.schema import SCHEMA_VERSION
 
 
 class QualityTests(unittest.TestCase):
@@ -79,7 +80,7 @@ class QualityTests(unittest.TestCase):
                 self.assertEqual(run.id, 2)
                 self.assertEqual(db.list_evals("test", run_id="new"), [run])
             with closing(sqlite3.connect(path)) as raw:
-                self.assertEqual(raw.execute("PRAGMA user_version").fetchone()[0], 2)
+                self.assertEqual(raw.execute("PRAGMA user_version").fetchone()[0], SCHEMA_VERSION)
                 self.assertEqual(raw.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
     def test_failed_migration_leaves_the_old_schema_intact(self):

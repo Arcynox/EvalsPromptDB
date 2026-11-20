@@ -34,7 +34,7 @@ promptdb --version
 
 The distribution is named `evals-promptdb`. Import `PromptDB` from `promptdb`, and run `promptdb` or `python -m promptdb`. You can run `python -m promptdb` from the checkout without installing it.
 
-If you installed PromptDB 0.1.0 or 0.2.0 from this project, remove the old distribution (`promptdb` or `promptdb-local`, respectively) from that environment before installing `evals-promptdb`. Version 1.1 opens older SQLite files and migrates them to schema 2 in a single transaction. Use 1.1 or later for migrated files.
+If you installed PromptDB 0.1.0 or 0.2.0 from this project, remove the old distribution (`promptdb` or `promptdb-local`, respectively) from that environment before installing `evals-promptdb`. Opening an older SQLite file with a writable connection migrates it in a single transaction. Use the upgraded package to open migrated files.
 
 ## Quickstart in Python
 
@@ -75,6 +75,33 @@ with PromptDB("prompts.db") as db:
 ```
 
 The same case applies to both versions. By default, `run_tests()` scores text by exact match after trimming surrounding whitespace. A custom `scorer(output, expected)` can return any numeric score from 0 to 1 and is required for non-text expectations.
+
+## Chat prompts
+
+Store ordered text messages when the model needs distinct instruction and conversation roles. Variables work in every message. The supported roles are `system`, `developer`, `user`, and `assistant`.
+
+```python
+from promptdb import PromptDB
+
+with PromptDB(":memory:") as db:
+    prompt = db.save("translate", messages=[
+        {"role": "system", "content": "Translate the user's text to {{language}}."},
+        {"role": "user", "content": "{{text}}"},
+    ])
+    inputs = {"language": "Spanish", "text": "Good morning"}
+    messages = prompt.render_messages(inputs)
+    db.add_test("translate", input=inputs, expected="Buenos días")
+    db.run_tests("translate", model="demo", generate_messages=lambda conversation: "Buenos días")
+```
+
+`Prompt.kind` distinguishes `text` and `chat`. `render_messages()` also accepts text prompts and wraps their rendered text in a single user message. `render()` returns JSON text for chat prompts. Use `generate_messages` to pass the rendered messages directly to your model client.
+
+```bash
+promptdb --db chat.db save translate --messages - <<'JSON'
+[{"role":"system","content":"Translate to {{language}}."},{"role":"user","content":"{{text}}"}]
+JSON
+promptdb --db chat.db get translate --input '{"language":"Spanish","text":"Good morning"}'
+```
 
 ## Quickstart in the terminal
 
@@ -120,7 +147,7 @@ A failed gate returns status `3`, including when required scores or cases are mi
 
 | Operation | Behavior |
 | --- | --- |
-| `save(name, template, ...)` | Creates a new version. Accepts optional `version`, `variables`, `model`, `temperature`, `metadata`, and `tags`. |
+| `save(name, template, ...)` | Creates a version of a text prompt or accepts `messages=` for chat. Also accepts `version`, `variables`, `model`, `temperature`, `metadata`, and `tags`. |
 | `get(name, version="latest", tag=None)` | Returns the highest matching version. Passing a number and a tag requires both to match. Raises `KeyError` when there is no match. |
 | `Prompt.render(values)` | Replaces detected placeholders in one pass. Extra inputs are allowed. A missing input raises `KeyError`. |
 | `list(tags=())` and `history(name)` | List versions. Filtering by tags requires every requested tag. History orders versions from oldest to newest. |
@@ -150,7 +177,7 @@ promptdb --db restored.db history country
 
 The snapshot includes templates, metadata, tags, inputs, expected values, outputs, dates, IDs, and version counters. The same database state produces the same UTF-8 JSON. Import requires a new or unused database and validates the complete snapshot in one transaction. Use `db.export_json()` to get a string and `db.import_json(payload)` to restore it from Python.
 
-The JSON format is identified by `format: "evals-promptdb"` and `version: 2`. Format 2 includes run IDs and can import format 1 snapshots. You can check a snapshot into Git and import it into a new SQLite file in CI.
+The JSON format is identified by `format: "evals-promptdb"` and `version: 3`. Chat messages are stored as JSON arrays in snapshots. Imports accept formats 1 and 2. You can check a snapshot into Git and import it into a new SQLite file in CI.
 
 Use SQLite backup when you want a standalone database file. The source can be open in other connections. The destination must be a new path in an existing directory on a filesystem that supports hard links.
 
@@ -173,7 +200,7 @@ promptdb --db prompts.db --read-only export --output snapshot.json
 
 ## Provider examples
 
-Run the Python quickstart first. From the checkout, `python -m examples.evaluate` runs saved cases over any number of versions with one shared run ID. It supports Ollama, OpenAI, Anthropic, and a deterministic uppercase function for offline tests.
+Run the Python quickstart first. From the checkout, `python -m examples.evaluate` runs saved cases over any number of versions with one shared run ID. It supports Ollama, OpenAI, Anthropic, OpenAI-compatible Chat Completions servers, and a deterministic uppercase function for offline tests.
 
 ```bash
 python -m examples.evaluate ollama country 1 2 --model qwen2.5-coder:7b --run-id ollama-smoke
@@ -183,6 +210,8 @@ promptdb compare country 1 2 --model ollama/qwen2.5-coder:7b --run-id ollama-smo
 Ollama uses its local HTTP API and an installed model. Set `--ollama-host` to choose a server. OpenAI uses the optional `openai` SDK and `OPENAI_API_KEY`. Anthropic uses the optional `anthropic` SDK and `ANTHROPIC_API_KEY`. Pass `--model` with the ID for that provider. The script prints the model key and run ID to use with `promptdb compare`. [Ollama Chat API](https://docs.ollama.com/api/chat) · [Anthropic Messages API](https://platform.claude.com/docs/en/api/messages)
 
 Use `--timeout` to allow for a cold start, `--max-tokens` to limit generated tokens, or `--ollama-context` to set the local context size.
+
+Use `openai-compatible --api-base` with a base URL such as `http://127.0.0.1:8000/v1` for a server that exposes Chat Completions. Set `PROMPTDB_ENDPOINT_API_KEY` if that server requires a bearer token. The example sends developer messages as system instructions to Ollama and compatible servers. Anthropic takes system and developer instructions before the first conversation turn. [vLLM compatible server documentation](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/)
 
 ### OpenAI from Python
 

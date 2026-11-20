@@ -3,6 +3,7 @@ import unittest
 from datetime import datetime, timezone
 
 from promptdb import PromptDB
+from promptdb._snapshots import FORMAT_VERSION
 
 
 class SnapshotTests(unittest.TestCase):
@@ -78,6 +79,7 @@ class SnapshotTests(unittest.TestCase):
             snapshot = json.loads(source.export_json())
             snapshot["version"] = 1
             del snapshot["evaluations"][0]["run_id"]
+            del snapshot["prompts"][0]["kind"]
             target.import_json(json.dumps(snapshot))
             self.assertEqual(target.list_evals("test"), [legacy])
-            self.assertEqual(json.loads(target.export_json())["version"], 2)
+            self.assertEqual(json.loads(target.export_json())["version"], FORMAT_VERSION)

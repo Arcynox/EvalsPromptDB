@@ -99,6 +99,16 @@ class CommandLineTests(unittest.TestCase):
         result = subprocess.check_output([*command, "get", "template"], timeout=30, env=env)
         self.assertEqual(result, content)
 
+    def test_cli_chat_messages_file_and_convenient_rendered_json(self):
+        messages = [{"role": "developer", "content": "Be concise"}, {"role": "user", "content": "Hola {{nombre}}"}]
+        file = self.database.with_name("messages.json")
+        file.write_text(json.dumps(messages), encoding="utf-8-sig")
+        self.cli("save", "saludo", "--messages", str(file))
+        self.assertEqual(json.loads(self.cli("get", "saludo").stdout), messages)
+        rendered = self.cli("get", "saludo", "--input", '{"nombre":"Córdoba"}')
+        self.assertEqual(json.loads(rendered.stdout)[1], {"role": "user", "content": "Hola Córdoba"})
+        self.assertEqual(json.loads(self.cli("get", "saludo", "--json").stdout)["messages"], messages)
+
     def test_from_file_preserves_template_and_render_errors_are_readable(self):
         source = self.database.with_name("plantilla.txt")
         self.cli("save", "saludo", "--from-file", str(source), status=1)

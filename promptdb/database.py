@@ -17,11 +17,14 @@ from uuid import uuid4
 
 from . import _snapshots
 from ._values import (
+    chat_messages,
+    chat_template,
     evaluation_output,
     json_object,
     json_value,
     label,
     labels,
+    message_variables,
     number,
     positive_integer,
     template_variables,
@@ -29,6 +32,7 @@ from ._values import (
 )
 from .records import (
     CaseScore,
+    ChatMessage,
     Comparison,
     Evaluation,
     PairedScore,
@@ -195,14 +199,26 @@ class PromptDB:
             _snapshots.restore(self._conn, snapshot)
 
     def save(
-        self, name: str, template: str, *, version: int | None = None,
+        self, name: str, template: str | None = None, *,
+        messages: Iterable[ChatMessage | Mapping[str, str]] | None = None, version: int | None = None,
         variables: Iterable[str] | None = None, model: str | None = None,
         temperature: float | None = None, tags: Iterable[str] = (),
         metadata: Mapping[str, Any] | None = None,
     ) -> Prompt:
-        """Save a new version. Version numbers increase per name and are never reused."""
+        """Save a new version of a text or chat prompt."""
         label(name, "name")
-        detected = template_variables(template, variables)
+        kind = "text"
+        if messages is not None:
+            if template is not None:
+                raise ValueError("Provide a text template or chat messages")
+            ordered = chat_messages(messages)
+            template = chat_template(ordered)
+            detected = message_variables(ordered, variables)
+            kind = "chat"
+        else:
+            if template is None:
+                raise ValueError("A text template or chat messages are required")
+            detected = template_variables(template, variables)
         tags = labels(tags, "tags")
         if model is not None:
             label(model, "model")
@@ -220,10 +236,10 @@ class PromptDB:
                 raise ValueError(f"version must be greater than {last} for {name!r}")
             self._conn.execute(
                 """INSERT INTO prompts
-                   (name, version, template, variables, model, temperature, metadata, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                   (name, version, template, variables, model, temperature, metadata, created_at, kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (name, version, template, json_value(detected), model, temperature, metadata_json,
-                 timestamp()),
+                 timestamp(), kind),
             )
             self._conn.execute(
                 "UPDATE prompt_names SET last_version = ? WHERE name = ?", (version, name)
@@ -247,6 +263,7 @@ class PromptDB:
             variables=tuple(json.loads(row["variables"])), model=row["model"],
             temperature=row["temperature"], metadata=json.loads(row["metadata"]),
             tags=tuple(tag[0] for tag in tags), created_at=datetime.fromisoformat(row["created_at"]),
+            messages=chat_messages(json.loads(row["template"])) if row["kind"] == "chat" else (),
         )
 
     def _get(self, name: str, version: int | Literal["latest"], tag: str | None = None) -> Prompt:
@@ -388,12 +405,15 @@ class PromptDB:
                           json.loads(metadata), datetime.fromisoformat(created_at), run_id)
 
     def run_tests(
-        self, name: str, *, model: str, generate: Callable[[str], str],
+        self, name: str, *, model: str, generate: Callable[[str], str] | None = None,
+        generate_messages: Callable[[list[dict[str, str]]], str] | None = None,
         version: int | Literal["latest"] = "latest", scorer: Callable[[str, Any], float] | None = None,
         metadata: Mapping[str, Any] | None = None, run_id: str | None = None,
     ) -> list[Evaluation]:
-        """Run all saved cases through a caller-supplied generator and record them as a batch."""
+        """Run cases with a text or chat generator and record the results as a batch."""
         self._require_writable()
+        if (generate is None) == (generate_messages is None):
+            raise ValueError("Provide exactly one of generate and generate_messages")
         label(model, "model")
         run_id = uuid4().hex if run_id is None else label(run_id, "run_id")
         metadata_json = json_object({} if metadata is None else metadata, "metadata")
@@ -406,10 +426,15 @@ class PromptDB:
             raise ValueError("A custom scorer is required for non-text expectations")
 
         # Render all cases before invoking code that may call an external provider.
-        rendered = [prompt.render(test.input) for test in tests]
+        if generate_messages is not None:
+            rendered_messages = [prompt.render_messages(test.input) for test in tests]
+            outputs = (generate_messages(messages) for messages in rendered_messages)
+        else:
+            assert generate is not None
+            rendered = [prompt.render(test.input) for test in tests]
+            outputs = (generate(text) for text in rendered)
         results = []
-        for test, text in zip(tests, rendered):
-            output = generate(text)
+        for test, output in zip(tests, outputs):
             if not isinstance(output, str):
                 raise ValueError("generate must return a string")
             score = float(output.strip() == test.expected.strip()) if scorer is None else scorer(output, test.expected)

@@ -4,6 +4,7 @@ from ._version import __version__
 from .database import PromptDB
 from .records import (
     CaseScore,
+    ChatMessage,
     Comparison,
     Evaluation,
     PairedScore,
@@ -14,6 +15,7 @@ from .records import (
 
 __all__ = [
     "CaseScore",
+    "ChatMessage",
     "Comparison",
     "Evaluation",
     "PairedScore",

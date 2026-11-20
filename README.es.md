@@ -34,7 +34,7 @@ promptdb --version
 
 La distribución se llama `evals-promptdb`. Importá `PromptDB` desde `promptdb` y ejecutá `promptdb` o `python -m promptdb`. También podés ejecutar `python -m promptdb` desde este directorio sin instalar el paquete.
 
-Si instalaste PromptDB 0.1.0 o 0.2.0 desde este proyecto, desinstalá la distribución anterior (`promptdb` o `promptdb-local`, respectivamente) en ese entorno antes de instalar `evals-promptdb`. La versión 1.1 abre los archivos SQLite anteriores y los migra al esquema 2 en una transacción. Usá 1.1 o posterior para abrir un archivo migrado.
+Si instalaste PromptDB 0.1.0 o 0.2.0 desde este proyecto, desinstalá la distribución anterior (`promptdb` o `promptdb-local`, respectivamente) en ese entorno antes de instalar `evals-promptdb`. Una conexión de escritura migra los archivos SQLite anteriores en una sola transacción. Usá el paquete actualizado para abrir los archivos migrados.
 
 ## Inicio rápido en Python
 
@@ -75,6 +75,33 @@ with PromptDB("prompts.db") as db:
 ```
 
 El mismo caso se aplica a las dos versiones. Por defecto, `run_tests()` puntúa por coincidencia exacta tras quitar el espacio en blanco de los extremos. Una función `scorer(output, expected)` puede devolver cualquier puntuación numérica de 0 a 1 y es obligatoria si el valor esperado tiene un tipo distinto de texto.
+
+## Prompts de chat
+
+Guardá mensajes de texto ordenados cuando el modelo necesite distinguir las instrucciones de los turnos de conversación. Podés usar variables en cada mensaje. Los roles admitidos son `system`, `developer`, `user` y `assistant`.
+
+```python
+from promptdb import PromptDB
+
+with PromptDB(":memory:") as db:
+    prompt = db.save("traducir", messages=[
+        {"role": "system", "content": "Traducí el texto del usuario a {{idioma}}."},
+        {"role": "user", "content": "{{texto}}"},
+    ])
+    entrada = {"idioma": "español", "texto": "Good morning"}
+    mensajes = prompt.render_messages(entrada)
+    db.add_test("traducir", input=entrada, expected="Buenos días")
+    db.run_tests("traducir", model="demo", generate_messages=lambda conversación: "Buenos días")
+```
+
+`Prompt.kind` indica si el prompt es `text` o `chat`. `render_messages()` también admite prompts de texto y devuelve un único mensaje de usuario. `render()` devuelve texto JSON para prompts de chat. Usá `generate_messages` para pasar los mensajes directamente al cliente del modelo.
+
+```bash
+promptdb --db chat.db save traducir --messages - <<'JSON'
+[{"role":"system","content":"Traducí a {{idioma}}."},{"role":"user","content":"{{texto}}"}]
+JSON
+promptdb --db chat.db get traducir --input '{"idioma":"español","texto":"Good morning"}'
+```
 
 ## Inicio rápido en la terminal
 
@@ -120,7 +147,7 @@ Un control fallido devuelve `3`, incluso cuando faltan puntuaciones o casos requ
 
 | Operación | Comportamiento |
 | --- | --- |
-| `save(name, template, ...)` | Crea una versión. Admite `version`, `variables`, `model`, `temperature`, `metadata` y `tags`. |
+| `save(name, template, ...)` | Crea una versión de texto o admite `messages=` para chat. También acepta `version`, `variables`, `model`, `temperature`, `metadata` y `tags`. |
 | `get(name, version="latest", tag=None)` | Devuelve la versión de mayor número que coincide con los filtros. Si pasás un número y una etiqueta, deben coincidir ambos. Si falta el registro, lanza `KeyError`. |
 | `Prompt.render(values)` | Reemplaza los marcadores detectados una sola vez. Admite valores adicionales. Una variable faltante produce `KeyError`. |
 | `list(tags=())` y `history(name)` | Listan versiones. El filtro exige todas las etiquetas solicitadas. El historial va de la versión más antigua a la más reciente. |
@@ -150,7 +177,7 @@ promptdb --db restaurada.db history pais
 
 El snapshot incluye plantillas, metadata, etiquetas, entradas, valores esperados, salidas, fechas, identificadores y contadores de versión. El mismo estado produce el mismo JSON en UTF-8. La importación requiere una base nueva o sin uso y valida el snapshot completo en una transacción. Usá `db.export_json()` para obtener el texto y `db.import_json(payload)` para restaurarlo desde Python.
 
-El formato JSON se identifica con `format: "evals-promptdb"` y `version: 2`. El formato 2 incluye identificadores de corrida y puede importar snapshots de formato 1. Podés guardar el snapshot en Git e importarlo a un archivo SQLite nuevo en CI.
+El formato JSON se identifica con `format: "evals-promptdb"` y `version: 3`. Los mensajes de chat se representan como arrays JSON en los snapshots. La importación admite los formatos 1 y 2. Podés guardar el snapshot en Git e importarlo a un archivo SQLite nuevo en CI.
 
 Usá una copia de seguridad SQLite si necesitás un archivo de base de datos listo para abrir. Otras conexiones pueden seguir usando el archivo original. Elegí un archivo nuevo en un directorio existente cuyo sistema de archivos admita enlaces duros.
 
@@ -173,7 +200,7 @@ promptdb --db prompts.db --read-only export --output snapshot.json
 
 ## Ejemplos de proveedores
 
-Corré primero el inicio rápido en Python. Desde el directorio del proyecto, `python -m examples.evaluate` ejecuta casos guardados sobre varias versiones con un identificador de corrida compartido. Admite Ollama, OpenAI, Anthropic y una función determinista de mayúsculas para pruebas sin conexión.
+Corré primero el inicio rápido en Python. Desde el directorio del proyecto, `python -m examples.evaluate` ejecuta casos guardados sobre varias versiones con un identificador de corrida compartido. Admite Ollama, OpenAI, Anthropic, servidores con Chat Completions compatible con OpenAI y una función determinista de mayúsculas para pruebas sin conexión.
 
 ```bash
 python -m examples.evaluate ollama pais 1 2 --model qwen2.5-coder:7b --run-id ollama-smoke
@@ -183,6 +210,8 @@ promptdb compare pais 1 2 --model ollama/qwen2.5-coder:7b --run-id ollama-smoke 
 Ollama usa su API HTTP local y un modelo instalado. Pasá `--ollama-host` si querés elegir otro servidor. OpenAI usa el SDK opcional `openai` y `OPENAI_API_KEY`. Anthropic usa el SDK opcional `anthropic` y `ANTHROPIC_API_KEY`. Indicá el identificador del modelo con `--model`. El script muestra la clave del modelo y el identificador necesarios para `promptdb compare`. [API de Ollama Chat](https://docs.ollama.com/api/chat) · [API de Anthropic Messages](https://platform.claude.com/docs/en/api/messages)
 
 Usá `--timeout` para dar más tiempo al primer arranque, `--max-tokens` para limitar la salida o `--ollama-context` para configurar el tamaño de contexto local.
+
+Usá `openai-compatible --api-base` con una URL base como `http://127.0.0.1:8000/v1` para un servidor que exponga Chat Completions. Configurá `PROMPTDB_ENDPOINT_API_KEY` si ese servidor requiere un token. El ejemplo envía los mensajes `developer` como instrucciones `system` a Ollama y a los servidores compatibles. Con Anthropic, ubicá las instrucciones `system` y `developer` antes del primer turno de conversación. [Documentación del servidor compatible de vLLM](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/)
 
 ### OpenAI desde Python
 

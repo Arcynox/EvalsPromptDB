@@ -4,10 +4,13 @@ from datetime import datetime
 from typing import Any
 
 from ._values import (
+    chat_messages,
+    chat_template,
     evaluation_output,
     json_object,
     json_value,
     label,
+    message_variables,
     number,
     positive_integer,
     template_variables,
@@ -15,12 +18,12 @@ from ._values import (
 )
 
 FORMAT = "evals-promptdb"
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 
 # Foreign-key dependencies determine import order. Each order-by key is unique.
 TABLES = (
     ("prompt_names", "name last_version", "name"),
-    ("prompts", "name version template variables model temperature metadata created_at", "name, version"),
+    ("prompts", "name version template variables model temperature metadata created_at kind", "name, version"),
     ("tags", "name version tag", "name, version, tag"),
     ("test_cases", "id name input expected created_at", "id"),
     ("evaluations", "id name version score model test_id output metadata created_at run_id", "id"),
@@ -46,6 +49,8 @@ def encode(connection: sqlite3.Connection) -> str:
             record = dict(row)
             for column in JSON_COLUMNS.get(table, ()):
                 record[column] = json.loads(record[column])
+            if table == "prompts" and record["kind"] == "chat":
+                record["template"] = json.loads(record["template"])
             records.append(record)
         snapshot[table] = records
     return json.dumps(snapshot, ensure_ascii=False, allow_nan=False, sort_keys=True, indent=2) + "\n"
@@ -90,7 +95,17 @@ def _row_values(table: str, columns: list[str], record: Any) -> tuple[Any, ...]:
         case "prompt_names":
             positive_integer(row["last_version"], "last_version")
         case "prompts":
-            detected = template_variables(row["template"])
+            kind = row.get("kind", "text")
+            if kind == "chat":
+                if not isinstance(row["template"], list):
+                    raise ValueError("A chat template must be a JSON array")
+                messages = chat_messages(row["template"])
+                detected = message_variables(messages)
+                row["template"] = chat_template(messages)
+            elif kind == "text":
+                detected = template_variables(row["template"])
+            else:
+                raise ValueError("Prompt kind must be text or chat")
             if row["variables"] != list(detected):
                 raise ValueError("variables must match the detected variables in order")
             row["variables"] = json_value(detected)
@@ -123,6 +138,8 @@ def restore(connection: sqlite3.Connection, snapshot: dict[str, Any]) -> None:
         if not isinstance(records, list):
             raise ValueError(f"{table} must be an array")
         columns = fields.split()
+        if table == "prompts" and snapshot["version"] < 3:
+            columns.remove("kind")
         if table == "evaluations" and snapshot["version"] == 1:
             columns.remove("run_id")
         names = ", ".join(columns)

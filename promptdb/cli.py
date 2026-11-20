@@ -117,6 +117,7 @@ def _parser() -> argparse.ArgumentParser:
     template = save.add_mutually_exclusive_group(required=True)
     template.add_argument("--template")
     template.add_argument("--from-file", metavar="PATH", help="read UTF-8 text, or use - for stdin")
+    template.add_argument("--messages", metavar="PATH", help="read a JSON chat template, or use - for stdin")
     save.add_argument("--version", type=int)
     save.add_argument("--model")
     save.add_argument("--temperature", type=float)
@@ -234,7 +235,7 @@ def _run(db: PromptDB, args: argparse.Namespace) -> int:
             _print_json({"ok": not issues, "issues": issues})
             return 1 if issues else 0
         case "save":
-            prompt = db.save(args.name, args.template, version=args.version, model=args.model,
+            prompt = db.save(args.name, args.template, messages=args.chat, version=args.version, model=args.model,
                              temperature=args.temperature, tags=args.tag, metadata=args.metadata)
             _write_utf8(f"{prompt.name}@{prompt.version}\n")
         case "get":
@@ -296,8 +297,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.read_only and args.command == "init":
             raise PermissionError("init requires a writable database")
-        if args.command == "save" and args.from_file is not None:
-            args.template = _read_utf8(args.from_file)
+        if args.command == "save":
+            args.chat = None
+            if args.from_file is not None:
+                args.template = _read_utf8(args.from_file)
+            if args.messages is not None:
+                args.chat = json.loads(_read_utf8(args.messages).removeprefix("\ufeff"))
+                if not isinstance(args.chat, list):
+                    raise ValueError("--messages requires a JSON array")
         if args.command == "import":
             args.payload = _read_utf8(args.source).removeprefix("\ufeff")
         with PromptDB(args.db, create=args.command in {"init", "save", "import"}, read_only=args.read_only) as db:

@@ -1,9 +1,9 @@
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Set
 from datetime import datetime, timezone
 from typing import Any
 
-from .records import PLACEHOLDER
+from .records import PLACEHOLDER, ChatMessage
 
 
 def label(value: str, field: str) -> str:
@@ -48,13 +48,45 @@ def timestamp(value: datetime | None = None) -> str:
     return value.astimezone(timezone.utc).isoformat(timespec="microseconds")
 
 
-def template_variables(template: str, variables: Iterable[str] | None = None) -> tuple[str, ...]:
-    if not isinstance(template, str) or not template.strip():
-        raise ValueError("template must be a non-empty string")
-    detected = tuple(dict.fromkeys(PLACEHOLDER.findall(template)))
+def _detect_variables(texts: Iterable[str], variables: Iterable[str] | None) -> tuple[str, ...]:
+    detected = tuple(dict.fromkeys(name for text in texts for name in PLACEHOLDER.findall(text)))
     if variables is not None and set(labels(variables, "variables")) != set(detected):
         raise ValueError("variables must match the placeholders in the template")
     return detected
+
+
+def template_variables(template: str, variables: Iterable[str] | None = None) -> tuple[str, ...]:
+    if not isinstance(template, str) or not template.strip():
+        raise ValueError("template must be a non-empty string")
+    return _detect_variables((template,), variables)
+
+
+def chat_messages(messages: Iterable[ChatMessage | Mapping[str, str]]) -> tuple[ChatMessage, ...]:
+    if isinstance(messages, (str, bytes, Mapping, Set)) or not isinstance(messages, Iterable):
+        raise ValueError("messages must be an ordered collection of role/content messages")
+    result = []
+    for message in messages:
+        if isinstance(message, ChatMessage):
+            role, content = message.role, message.content
+        elif isinstance(message, Mapping) and message.keys() == {"role", "content"}:
+            role, content = message["role"], message["content"]
+        else:
+            raise ValueError("Each chat message must have role and content fields")
+        if role not in ("system", "developer", "user", "assistant") or not isinstance(content, str):
+            raise ValueError("Chat messages require a system, developer, user or assistant role and string content")
+        result.append(ChatMessage(role, content))
+    if not result:
+        raise ValueError("A chat prompt needs at least one message")
+    return tuple(result)
+
+
+def message_variables(messages: Iterable[ChatMessage], variables: Iterable[str] | None = None) -> tuple[str, ...]:
+    return _detect_variables((message.content for message in messages), variables)
+
+
+def chat_template(messages: Iterable[ChatMessage]) -> str:
+    return json.dumps([{"role": message.role, "content": message.content} for message in messages],
+                      ensure_ascii=False, indent=2)
 
 
 def evaluation_output(value: str | None) -> str | None:

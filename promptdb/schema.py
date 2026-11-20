@@ -1,8 +1,12 @@
 APPLICATION_ID = 0x50524442
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 EVALUATIONS_BY_RUN = "CREATE INDEX evaluations_by_run ON evaluations(name, run_id, version, created_at)"
-MIGRATIONS = {1: ("ALTER TABLE evaluations ADD COLUMN run_id TEXT", EVALUATIONS_BY_RUN)}
+PROMPT_KIND = "kind TEXT NOT NULL DEFAULT 'text' CHECK (kind IN ('text', 'chat'))"
+MIGRATIONS = {
+    1: ("ALTER TABLE evaluations ADD COLUMN run_id TEXT", EVALUATIONS_BY_RUN),
+    2: (f"ALTER TABLE prompts ADD COLUMN {PROMPT_KIND}",),
+}
 
 SCHEMA = (
     """
@@ -11,7 +15,7 @@ SCHEMA = (
         last_version INTEGER NOT NULL DEFAULT 0
     )
     """,
-    """
+    f"""
     CREATE TABLE prompts (
         name TEXT NOT NULL REFERENCES prompt_names(name),
         version INTEGER NOT NULL CHECK (version > 0),
@@ -21,6 +25,7 @@ SCHEMA = (
         temperature REAL,
         metadata TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        {PROMPT_KIND},
         PRIMARY KEY (name, version)
     )
     """,

@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -71,3 +72,31 @@ class ProviderExampleTests(unittest.TestCase):
         responses.assert_called_once_with(model="example-model", input="Name Madrid", store=False, max_output_tokens=256)
         messages.assert_called_once_with(model="example-model", max_tokens=256,
                                          messages=[{"role": "user", "content": "Name Madrid"}])
+
+    def test_openai_compatible_chat_does_not_reuse_an_openai_key(self):
+        payload = [{"role": "developer", "content": "Answer the user"}, {"role": "user", "content": "Hola"}]
+        reply = BytesIO(b'{"choices":[{"message":{"content":"Hola"}}]}')
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "unrelated"}, clear=True), \
+             patch("examples.evaluate.urlopen", return_value=reply) as request:
+            generator = make_generator("openai-compatible", "other-model", api_base="localhost:1234/v1/")
+            self.assertEqual(generator(payload), "Hola")
+        call = request.call_args.args[0]
+        self.assertEqual(call.full_url, "http://localhost:1234/v1/chat/completions")
+        self.assertIsNone(call.get_header("Authorization"))
+        self.assertEqual(json.loads(call.data)["messages"], [
+            {"role": "system", "content": "Answer the user"}, {"role": "user", "content": "Hola"},
+        ])
+        self.assertEqual(payload[0]["role"], "developer")
+
+    def test_provider_specific_system_messages_preserve_conversation_order(self):
+        messages = Mock(return_value=SimpleNamespace(content=[SimpleNamespace(type="text", text="OK")]))
+        anthropic = ModuleType("anthropic")
+        anthropic.Anthropic = Mock(return_value=SimpleNamespace(messages=SimpleNamespace(create=messages)))
+        with patch.dict("sys.modules", {"anthropic": anthropic}):
+            generate = make_generator("anthropic", "example-model")
+            user = {"role": "user", "content": "Hello"}
+            system = {"role": "system", "content": "Be concise"}
+            self.assertEqual(generate([system, user]), "OK")
+            with self.assertRaisesRegex(ValueError, "before conversation"):
+                generate([user, system])
+        messages.assert_called_once_with(model="example-model", max_tokens=256, system="Be concise", messages=[user])

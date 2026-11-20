@@ -1,10 +1,17 @@
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 PLACEHOLDER = re.compile(r"\{\{[ \t]*([^\W\d]\w*)[ \t]*\}\}")
+
+
+@dataclass(frozen=True)
+class ChatMessage:
+    role: str
+    content: str
 
 
 @dataclass(frozen=True)
@@ -18,13 +25,33 @@ class Prompt:
     metadata: dict[str, Any]
     tags: tuple[str, ...]
     created_at: datetime
+    messages: tuple[ChatMessage, ...] = ()
 
-    def render(self, values: Mapping[str, Any]) -> str:
-        """Substitute supplied values in a single pass."""
+    @property
+    def kind(self) -> Literal["text", "chat"]:
+        return "chat" if self.messages else "text"
+
+    def _check_variables(self, values: Mapping[str, Any]) -> None:
         missing = [name for name in self.variables if name not in values]
         if missing:
             raise KeyError(f"Missing prompt variables: {', '.join(missing)}")
+
+    def render(self, values: Mapping[str, Any]) -> str:
+        """Render a text prompt or a chat prompt's JSON representation."""
+        if self.messages:
+            return json.dumps(self.render_messages(values), ensure_ascii=False, indent=2)
+        self._check_variables(values)
         return PLACEHOLDER.sub(lambda match: str(values[match[1]]), self.template)
+
+    def render_messages(self, values: Mapping[str, Any]) -> list[dict[str, str]]:
+        """Render a list of role/content messages suitable for a text chat API."""
+        if not self.messages:
+            return [{"role": "user", "content": self.render(values)}]
+        self._check_variables(values)
+        return [
+            {"role": message.role, "content": PLACEHOLDER.sub(lambda match: str(values[match[1]]), message.content)}
+            for message in self.messages
+        ]
 
 
 @dataclass(frozen=True)
