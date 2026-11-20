@@ -3,6 +3,7 @@
   <h1>Evals PromptDB</h1>
   <p><strong>Prompts de LLM versionados y evaluaciones en SQLite local.</strong></p>
   <p>
+    <a href="https://pypi.org/project/evals-promptdb/"><img src="https://img.shields.io/pypi/v/evals-promptdb" alt="PyPI"></a>
     <a href="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml"><img src="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml/badge.svg" alt="Estado de CI en GitHub Actions"></a>
     <a href="#instalación"><img src="https://img.shields.io/badge/Python-3.10%2B-6d4aff" alt="Python 3.10 o posterior"></a>
     <a href="LICENSE"><img src="https://img.shields.io/badge/Licencia-MIT-27896d" alt="Licencia MIT"></a>
@@ -25,12 +26,14 @@ Guardá plantillas, casos, salidas y puntuaciones en un archivo `.db`. Usá la A
 
 ## Instalación
 
-Usá Python 3.10 o posterior. Instalá el paquete desde este directorio.
+Instalá desde [PyPI](https://pypi.org/project/evals-promptdb/) con Python 3.10 o posterior.
 
 ```bash
-python -m pip install .
+python -m pip install evals-promptdb
 promptdb --version
 ```
+
+Desde una copia local del repositorio, usá `python -m pip install .`.
 
 La distribución se llama `evals-promptdb`. Importá `PromptDB` desde `promptdb` y ejecutá `promptdb` o `python -m promptdb`. También podés ejecutar `python -m promptdb` desde este directorio sin instalar el paquete.
 
