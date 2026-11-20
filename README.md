@@ -171,6 +171,12 @@ A batch starts from the prompt and cases visible at the beginning of the run. Mo
 
 Use `archive-test` to retire a case or `restore-test` to make it active again. Use `replace-test NAME ID --input ... --expected ...` to archive the old case and create a new case with its own ID in one transaction. `get-test` and `evals` still show the original case and scores. By default, `run_tests`, `tests`, and `compare` use active cases. Pass `include_archived=True` to `list_tests()` or `compare()`, or `--include-archived` to `tests` or `compare`, to include archived cases in an audit.
 
+### Scoring structured outputs
+
+Use `from promptdb.scorers import json_match` and pass `scorer=json_match` to `run_tests()` for a JSON expectation. Field order and insignificant whitespace are ignored. Array order and the difference between numbers and booleans matter. Malformed JSON receives a zero score and its output stays in the evaluation record.
+
+To score output produced by another tool, pass `eval --test-id ID --scorer json --output-file response.json` with the prompt name, version, and model. Use `--output-file -` for stdin. The provider example also accepts `--scorer json`.
+
 ## JSON snapshots and SQLite backups
 
 Use JSON when you want to inspect changes in Git, transfer the logical data, or load it into a new database.

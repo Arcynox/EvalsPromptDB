@@ -13,6 +13,7 @@ from typing import Any, TextIO
 from ._version import __version__
 from .database import PromptDB
 from .records import Comparison
+from .scorers import json_match, text_match
 
 
 def _object_arg(text: str) -> dict[str, Any]:
@@ -183,11 +184,15 @@ def _parser() -> argparse.ArgumentParser:
     evaluate = commands.add_parser("eval", help="record an evaluation score")
     evaluate.add_argument("name")
     evaluate.add_argument("--version", type=int, required=True)
-    evaluate.add_argument("--score", type=float, required=True)
+    grading = evaluate.add_mutually_exclusive_group(required=True)
+    grading.add_argument("--score", type=float)
+    grading.add_argument("--scorer", choices=("text", "json"), help="score the output against the selected case")
     evaluate.add_argument("--model", required=True)
     evaluate.add_argument("--test-id", type=int)
     evaluate.add_argument("--run-id")
-    evaluate.add_argument("--output")
+    result = evaluate.add_mutually_exclusive_group()
+    result.add_argument("--output")
+    result.add_argument("--output-file", metavar="PATH", help="read model output in UTF-8 or from stdin with -")
     evaluate.add_argument("--metadata", type=_object_arg)
     evaluate.add_argument("--created-at", type=_date_arg, help="ISO 8601 time of an existing run")
 
@@ -291,7 +296,14 @@ def _run(db: PromptDB, args: argparse.Namespace) -> int:
         case "replace-test":
             _print_json(db.replace_test(args.name, args.test_id, input=args.input, expected=args.expected))
         case "eval":
-            _print_json(db.add_eval(args.name, version=args.version, score=args.score, model=args.model,
+            score = args.score
+            if args.scorer is not None:
+                if args.output is None or args.test_id is None:
+                    raise ValueError("--scorer needs --test-id and --output or --output-file")
+                expected = db.get_test(args.name, args.test_id).expected
+                scorer = text_match if args.scorer == "text" else json_match
+                score = scorer(args.output, expected)
+            _print_json(db.add_eval(args.name, version=args.version, score=score, model=args.model,
                                     test_id=args.test_id, output=args.output, metadata=args.metadata,
                                     created_at=args.created_at, run_id=args.run_id))
         case "evals":
@@ -330,6 +342,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     raise ValueError("--messages requires a JSON array")
         if args.command == "import":
             args.payload = _read_utf8(args.source).removeprefix("\ufeff")
+        if args.command == "eval" and args.output_file is not None:
+            args.output = _read_utf8(args.output_file)
         with PromptDB(args.db, create=args.command in {"init", "save", "import"}, read_only=args.read_only) as db:
             return _run(db, args)
     except (KeyError, OSError, ValueError, sqlite3.Error) as error:

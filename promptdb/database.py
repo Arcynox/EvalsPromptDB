@@ -42,6 +42,7 @@ from .records import (
     VersionComparison,
 )
 from .schema import APPLICATION_ID, MIGRATIONS, SCHEMA, SCHEMA_VERSION
+from .scorers import text_match
 
 
 def _connect(path: str | PathLike[str], *, uri: bool = False, timeout: float = 15.0) -> sqlite3.Connection:
@@ -478,7 +479,7 @@ class PromptDB:
         for test, output in zip(tests, outputs):
             if not isinstance(output, str):
                 raise ValueError("generate must return a string")
-            score = float(output.strip() == test.expected.strip()) if scorer is None else scorer(output, test.expected)
+            score = text_match(output, test.expected) if scorer is None else scorer(output, test.expected)
             results.append((test.id, output, number(score, 1, "score")))
 
         created = timestamp()

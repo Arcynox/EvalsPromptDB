@@ -15,6 +15,7 @@ from ._values import (
     positive_integer,
     template_variables,
     timestamp,
+    unique_json_object,
 )
 
 FORMAT = "evals-promptdb"
@@ -56,15 +57,8 @@ def encode(connection: sqlite3.Connection) -> str:
     return json.dumps(snapshot, ensure_ascii=False, allow_nan=False, sort_keys=True, indent=2) + "\n"
 
 
-def _read_object(items: list[tuple[str, Any]]) -> dict[str, Any]:
-    result = dict(items)
-    if len(result) != len(items):
-        raise ValueError("Duplicate field in snapshot JSON")
-    return result
-
-
 def decode(payload: str) -> dict[str, Any]:
-    snapshot = json.loads(payload, object_pairs_hook=_read_object)
+    snapshot = json.loads(payload, object_pairs_hook=unique_json_object)
     keys = {"format", "version", "last_evaluation_id", *(table for table, _, _ in TABLES)}
     if not isinstance(snapshot, dict) or snapshot.keys() != keys:
         raise ValueError("Invalid snapshot structure")

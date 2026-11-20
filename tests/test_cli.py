@@ -128,6 +128,17 @@ class CommandLineTests(unittest.TestCase):
         self.cli("restore-test", "suite", str(old.id))
         self.assertEqual(json.loads(self.cli("tests", "suite").stdout)[0]["id"], old.id)
 
+    def test_cli_scores_external_json_output_from_stdin(self):
+        with PromptDB(self.database) as db:
+            db.save("suite", "{{word}}")
+            case = db.add_test("suite", input={"word": "one"}, expected={"value": 1, "ok": True})
+        command = ("eval", "suite", "--version", "1", "--model", "external", "--test-id", str(case.id),
+                   "--scorer", "json", "--output-file", "-")
+        actual = self.cli(*command, stdin='{"ok": true, "value": 1.0}\n')
+        self.assertEqual(json.loads(actual.stdout)["score"], 1)
+        mismatch = self.cli(*command, stdin='{"ok": 1, "value": 1}\n')
+        self.assertEqual(json.loads(mismatch.stdout)["score"], 0)
+
     def test_from_file_preserves_template_and_render_errors_are_readable(self):
         source = self.database.with_name("plantilla.txt")
         self.cli("save", "saludo", "--from-file", str(source), status=1)

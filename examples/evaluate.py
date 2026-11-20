@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from promptdb import PromptDB
+from promptdb.scorers import json_match
 
 PromptInput = str | list[dict[str, str]]
 
@@ -134,6 +135,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--db", default="prompts.db")
     parser.add_argument("--model", help="provider model ID; optional for the local uppercase function")
     parser.add_argument("--run-id", help="shared ID for all versions in this invocation")
+    parser.add_argument("--scorer", choices=("text", "json"), default="text")
     parser.add_argument("--ollama-host", default=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"))
     parser.add_argument("--api-base", default="http://127.0.0.1:1234/v1", help="base URL for openai-compatible")
     parser.add_argument("--ollama-context", type=int, help="optional context size in tokens for Ollama")
@@ -150,6 +152,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     model_key = f"{args.provider}/{model}"
     run_id = uuid4().hex if args.run_id is None else args.run_id
     versions = list(dict.fromkeys(args.versions))
+    scorer = json_match if args.scorer == "json" else None
     with PromptDB(args.db, create=False) as db:
         prompts = [db.get(args.name, version) for version in versions]
         if not db.list_tests(args.name):
@@ -158,9 +161,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                                   ollama_context=args.ollama_context, max_tokens=args.max_tokens, api_base=args.api_base)
         for prompt in prompts:
             if prompt.messages:
-                db.run_tests(args.name, version=prompt.version, model=model_key, generate_messages=generate, run_id=run_id)
+                db.run_tests(args.name, version=prompt.version, model=model_key, generate_messages=generate,
+                             scorer=scorer, run_id=run_id)
             else:
-                db.run_tests(args.name, version=prompt.version, model=model_key, generate=generate, run_id=run_id)
+                db.run_tests(args.name, version=prompt.version, model=model_key, generate=generate,
+                             scorer=scorer, run_id=run_id)
         summary = db.compare(args.name, versions, model=model_key, run_id=run_id)
     print(json.dumps({
         "run_id": run_id, "model": model_key,

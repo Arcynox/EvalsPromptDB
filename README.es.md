@@ -171,6 +171,12 @@ Una tanda toma la versión y los casos visibles al inicio. Las llamadas al model
 
 Usá `archive-test` para retirar un caso o `restore-test` para volver a activarlo. Con `replace-test NOMBRE ID --input ... --expected ...`, archivás el caso anterior y creás uno nuevo con su propio identificador en una transacción. `get-test` y `evals` siguen mostrando el caso original y sus puntuaciones. `run_tests`, `tests` y `compare` usan los casos activos por defecto. Para una auditoría, usá `include_archived=True` en `list_tests()` o `compare()`, o `--include-archived` en `tests` o `compare`.
 
+### Evaluar salidas estructuradas
+
+Importá `json_match` con `from promptdb.scorers import json_match` y pasá `scorer=json_match` a `run_tests()` para evaluar JSON. El orden de los campos y los espacios irrelevantes se ignoran. Se respeta el orden de los arrays y se distingue entre números y booleanos. El JSON malformado recibe cero y su salida se guarda en la evaluación.
+
+Para puntuar la salida de otra herramienta, usá `eval --test-id ID --scorer json --output-file respuesta.json` junto al nombre del prompt, la versión y el modelo. Pasá `--output-file -` para leer de la entrada estándar. El ejemplo de proveedores también admite `--scorer json`.
+
 ## Snapshots JSON y copias de seguridad SQLite
 
 Usá JSON para revisar cambios en Git, transferir los datos o cargar una base nueva.

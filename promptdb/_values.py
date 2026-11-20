@@ -40,6 +40,13 @@ def json_object(value: Mapping[str, Any], field: str) -> str:
     return json_value(dict(value))
 
 
+def unique_json_object(fields: list[tuple[str, Any]]) -> dict[str, Any]:
+    result = dict(fields)
+    if len(result) != len(fields):
+        raise ValueError("Duplicate field in JSON")
+    return result
+
+
 def timestamp(value: datetime | None = None) -> str:
     if value is None:
         value = datetime.now(timezone.utc)
