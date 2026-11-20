@@ -1,0 +1,4 @@
+include CHANGELOG.md
+include README.es.md
+include assets/evals-promptdb.png
+include tests/test_*.py
