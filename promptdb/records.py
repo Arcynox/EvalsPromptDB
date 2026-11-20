@@ -119,5 +119,10 @@ class Comparison:
     @property
     def best(self) -> VersionComparison | None:
         """Return the version with the highest row average, using comparison order for ties."""
-        scored = (row for row in self.versions if row.average_score is not None)
-        return max(scored, key=lambda row: row.average_score, default=None)
+        best = None
+        highest = float("-inf")
+        for row in self.versions:
+            score = row.average_score
+            if score is not None and score > highest:
+                best, highest = row, score
+        return best

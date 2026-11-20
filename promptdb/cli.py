@@ -39,7 +39,7 @@ def _date_arg(text: str) -> datetime:
 def _json_default(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
-    if is_dataclass(value):
+    if is_dataclass(value) and not isinstance(value, type):
         return asdict(value)
     raise TypeError(f"Cannot serialize {type(value).__name__} to JSON")
 
@@ -89,8 +89,8 @@ def _print_comparison(comparison: Comparison) -> None:
         ))
     widths = [max(map(len, column)) for column in zip(*rows)]
     _write_utf8(f"{comparison.name}  (base v{comparison.base_version}, {len(comparison.tests)} test cases)\n")
-    for row in rows:
-        _write_utf8("  ".join(value.ljust(width) for value, width in zip(row, widths)).rstrip() + "\n")
+    for cells in rows:
+        _write_utf8("  ".join(value.ljust(width) for value, width in zip(cells, widths)).rstrip() + "\n")
     for row in comparison.versions:
         if row.diff:
             _write_utf8(f"\n{row.diff}")

@@ -157,7 +157,8 @@ Un control fallido devuelve `3`, incluso cuando faltan puntuaciones o casos requ
 | `get_test(name, test_id)` | Lee un caso por su identificador, incluidos los casos archivados. |
 | `set_test_archived(name, test_id, archived=True)` y `replace_test(...)` | Permiten actualizar la suite activa y seguir consultando el caso anterior y sus evaluaciones. |
 | `add_eval(name, version=..., score=..., model=..., ...)` | Registra una puntuación y admite `test_id`, `run_id`, `output`, `metadata` y la fecha original `created_at`. |
-| `run_tests(name, model=..., generate=..., ...)` | Aplica las variables, llama a `generate(texto)` y registra todos los resultados en una transacción. Admite `version`, `scorer`, `metadata` y `run_id`. |
+| `run_tests(name, model=..., generate=..., ...)` | Aplica las variables a los casos activos, llama al generador y registra los resultados en una transacción. Elegí una versión o etiqueta y pasá `test_ids` para evaluar un subconjunto. |
+| `await arun_tests(name, model=..., generate=..., ...)` | Espera un generador de texto o mensajes y admite un evaluador síncrono o asíncrono. |
 | `compare(name, versions=None, ...)` y `list_evals(name, ...)` | Consultan evaluaciones guardadas con filtros por corrida, modelo, caso y fecha. |
 | `delete(name, version)` | Elimina una versión, sus etiquetas y sus evaluaciones. Los casos quedan asociados al nombre del prompt. |
 
@@ -166,6 +167,8 @@ Los marcadores como `{{ciudad}}` y `{{ ciudad }}` se detectan en orden de aparic
 Usá un `datetime` con zona horaria para `created_at`, `since` y `until`. La CLI acepta fechas ISO 8601 con desplazamiento, como `2026-11-12T10:00:00-03:00`. Los intervalos incluyen `since` y excluyen `until`. La primera versión solicitada es la base del diff. `resultado.best` devuelve la versión con mayor `average_score` de los registros que coinciden y, en caso de empate, respeta el orden de comparación. Las versiones sin evaluaciones coincidentes tienen promedio `None`. Usá el mismo modelo y un conjunto consistente de casos cuando la puntuación decida un paso de CI.
 
 Una tanda toma la versión y los casos visibles al inicio. Las llamadas al modelo y la puntuación ocurren fuera de la transacción de SQLite. Si falla la sustitución de variables, el generador, la evaluación o la escritura, la tanda no deja resultados parciales. `run_tests()` asigna un identificador por defecto. Pasá el mismo `run_id` a la base y la candidata cuando las evalúes juntas.
+
+Usá `arun_tests()` con un cliente asíncrono. Las transacciones de SQLite quedan fuera de las esperas al proveedor. Los dos métodos admiten `tag` para seleccionar la versión desplegada y `test_ids` para ejecutar casos activos en el orden solicitado. La cobertura se calcula sobre los casos elegibles de cada comparación.
 
 ### Mantenimiento de casos de prueba
 

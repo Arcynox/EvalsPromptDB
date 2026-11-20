@@ -157,7 +157,8 @@ A failed gate returns status `3`, including when required scores or cases are mi
 | `get_test(name, test_id)` | Read a case by ID, including an archived case. |
 | `set_test_archived(name, test_id, archived=True)` and `replace_test(...)` | Manage the active suite while keeping the previous case and its evaluations available. |
 | `add_eval(name, version=..., score=..., model=..., ...)` | Records a score and optionally `test_id`, `run_id`, `output`, `metadata`, and an existing `created_at`. |
-| `run_tests(name, model=..., generate=..., ...)` | Renders all cases, calls `generate(rendered_text)`, and stores the scored results in one transaction. Accepts `version`, `scorer`, `metadata`, and `run_id`. |
+| `run_tests(name, model=..., generate=..., ...)` | Renders active cases, calls the generator, and stores the scored results in one transaction. Select a version or tag and optionally pass `test_ids` to run a subset. |
+| `await arun_tests(name, model=..., generate=..., ...)` | Awaits a text or message generator and supports a synchronous or asynchronous scorer. |
 | `compare(name, versions=None, ...)` and `list_evals(name, ...)` | Read stored evaluations with filters for run ID, model, case, and date. |
 | `delete(name, version)` | Removes one version, its tags, and its evaluations. Associated test cases remain attached to the prompt name. |
 
@@ -166,6 +167,8 @@ Placeholder names such as `{{city}}` and `{{ city }}` are detected in first-use 
 Pass an aware `datetime` for `created_at`, `since`, and `until`. The CLI accepts ISO 8601 timestamps with offsets, such as `2026-11-12T10:00:00-03:00`. Time windows include `since` and exclude `until`. The comparison uses the first requested version as the base of the diff. `report.best` uses the highest `average_score` across matching rows and breaks ties in comparison order. Versions without matching runs have an average of `None`. Compare the same model and a consistent set of cases when using a score as a gate.
 
 A batch starts from the prompt and cases visible at the beginning of the run. Model calls and scoring happen outside the SQLite transaction. If rendering, generation, scoring, or persistence fails, the batch leaves no partial results. `run_tests()` assigns an ID to the batch by default. Pass the same `run_id` to the baseline and candidate when evaluating them together.
+
+Use `arun_tests()` with an async client in an event loop. It keeps SQLite transactions out of provider `await` calls. Both runners accept `tag` to select a deployed version and `test_ids` to run selected active cases in the requested order. A comparison measures coverage against the cases eligible for that comparison.
 
 ### Maintaining test cases
 

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import builtins
 import difflib
 import json
 import sqlite3
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from dataclasses import replace
 from datetime import datetime
+from inspect import isawaitable
 from io import StringIO
 from math import fsum
 from os import PathLike, link
@@ -44,6 +46,8 @@ from .records import (
 from .schema import APPLICATION_ID, MIGRATIONS, SCHEMA, SCHEMA_VERSION
 from .scorers import text_match
 
+_MessagePayload = list[dict[str, str]]
+
 
 def _connect(path: str | PathLike[str], *, uri: bool = False, timeout: float = 15.0) -> sqlite3.Connection:
     options: dict[str, Any] = {"isolation_level": None, "uri": uri, "timeout": timeout}
@@ -75,6 +79,13 @@ def _paired_score(
     return PairedScore(count, count / eligible_test_count, before, after, after - before)
 
 
+def _inserted_id(cursor: sqlite3.Cursor) -> int:
+    row_id = cursor.lastrowid
+    if row_id is None:
+        raise sqlite3.DatabaseError("SQLite did not return the inserted row ID")
+    return row_id
+
+
 class PromptDB:
     """An embedded SQLite store. Open a separate instance per thread."""
 
@@ -84,6 +95,7 @@ class PromptDB:
     ) -> None:
         self._read_only = read_only
         uri = read_only or not create
+        database: str | PathLike[str]
         if uri:
             mode = "ro" if read_only else "rw"
             database = Path(path).absolute().as_uri() + f"?mode={mode}"
@@ -308,7 +320,7 @@ class PromptDB:
         with self._transaction():
             return [self._prompt(row) for row in self._conn.execute(query + " ORDER BY name, version", params)]
 
-    def history(self, name: str) -> list[Prompt]:
+    def history(self, name: str) -> builtins.list[Prompt]:
         """List saved versions of a prompt from oldest to newest."""
         with self._transaction():
             rows = self._conn.execute(
@@ -359,7 +371,7 @@ class PromptDB:
             "INSERT INTO test_cases(name, input, expected, created_at) VALUES (?, ?, ?, ?)",
             (name, values, expected_json, created),
         )
-        return self.get_test(name, cursor.lastrowid)
+        return self.get_test(name, _inserted_id(cursor))
 
     @staticmethod
     def _test_case(row: sqlite3.Row) -> TestCase:
@@ -377,7 +389,7 @@ class PromptDB:
             raise KeyError(f"No test case {test_id} for prompt {name!r}")
         return self._test_case(row)
 
-    def list_tests(self, name: str, *, include_archived: bool = False) -> list[TestCase]:
+    def list_tests(self, name: str, *, include_archived: bool = False) -> builtins.list[TestCase]:
         """List active cases or include archived cases for an audit."""
         active = "" if include_archived else " AND archived_at IS NULL"
         rows = self._conn.execute(
@@ -443,29 +455,59 @@ class PromptDB:
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (name, version, score, model, test_id, output, metadata, created_at, run_id),
         )
-        return Evaluation(cursor.lastrowid, name, version, score, model, test_id, output,
+        return Evaluation(_inserted_id(cursor), name, version, score, model, test_id, output,
                           json.loads(metadata), datetime.fromisoformat(created_at), run_id)
+
+    def _prepare_test_run(
+        self, name: str, version: int | Literal["latest"], tag: str | None, model: str,
+        test_ids: Iterable[int] | None, metadata: Mapping[str, Any] | None, run_id: str | None,
+        custom_scorer: bool,
+    ) -> tuple[Prompt, builtins.list[TestCase], str, str]:
+        self._require_writable()
+        label(model, "model")
+        identifier = uuid4().hex if run_id is None else label(run_id, "run_id")
+        metadata_json = json_object({} if metadata is None else metadata, "metadata")
+        with self._transaction():
+            prompt = self._get(label(name, "name"), version, tag)
+            tests = self.list_tests(name)
+        if test_ids is not None:
+            available = {test.id: test for test in tests}
+            tests = []
+            for test_id in dict.fromkeys(positive_integer(value, "test_id") for value in test_ids):
+                if test_id not in available:
+                    raise KeyError(f"No active test case {test_id} for prompt {name!r}")
+                tests.append(available[test_id])
+        if not custom_scorer and any(not isinstance(test.expected, str) for test in tests):
+            raise ValueError("A custom scorer is required for non-text expectations")
+        return prompt, tests, identifier, metadata_json
+
+    def _record_test_run(
+        self, name: str, version: int, model: str, results: builtins.list[tuple[int, str, float]],
+        metadata_json: str, run_id: str,
+    ) -> builtins.list[Evaluation]:
+        if not results:
+            return []
+        created = timestamp()
+        with self._transaction(write=True):
+            self._get(name, version)
+            return [
+                self._insert_eval(name, version, score, model, test_id, output, metadata_json, created, run_id)
+                for test_id, output, score in results
+            ]
 
     def run_tests(
         self, name: str, *, model: str, generate: Callable[[str], str] | None = None,
-        generate_messages: Callable[[list[dict[str, str]]], str] | None = None,
+        generate_messages: Callable[[_MessagePayload], str] | None = None,
         version: int | Literal["latest"] = "latest", scorer: Callable[[str, Any], float] | None = None,
-        metadata: Mapping[str, Any] | None = None, run_id: str | None = None,
-    ) -> list[Evaluation]:
+        metadata: Mapping[str, Any] | None = None, run_id: str | None = None, tag: str | None = None,
+        test_ids: Iterable[int] | None = None,
+    ) -> builtins.list[Evaluation]:
         """Run cases with a text or chat generator and record the results as a batch."""
-        self._require_writable()
         if (generate is None) == (generate_messages is None):
             raise ValueError("Provide exactly one of generate and generate_messages")
-        label(model, "model")
-        run_id = uuid4().hex if run_id is None else label(run_id, "run_id")
-        metadata_json = json_object({} if metadata is None else metadata, "metadata")
-        with self._transaction():
-            prompt = self._get(label(name, "name"), version)
-            tests = self.list_tests(name)
-        if not tests:
-            return []
-        if scorer is None and any(not isinstance(test.expected, str) for test in tests):
-            raise ValueError("A custom scorer is required for non-text expectations")
+        prompt, tests, identifier, metadata_json = self._prepare_test_run(
+            name, version, tag, model, test_ids, metadata, run_id, scorer is not None,
+        )
 
         # Render all cases before invoking code that may call an external provider.
         if generate_messages is not None:
@@ -481,20 +523,45 @@ class PromptDB:
                 raise ValueError("generate must return a string")
             score = text_match(output, test.expected) if scorer is None else scorer(output, test.expected)
             results.append((test.id, output, number(score, 1, "score")))
+        return self._record_test_run(name, prompt.version, model, results, metadata_json, identifier)
 
-        created = timestamp()
-        with self._transaction(write=True):
-            self._get(name, prompt.version)
-            return [
-                self._insert_eval(name, prompt.version, score, model, test_id, output, metadata_json, created, run_id)
-                for test_id, output, score in results
-            ]
+    async def arun_tests(
+        self, name: str, *, model: str, generate: Callable[[str], Awaitable[str]] | None = None,
+        generate_messages: Callable[[_MessagePayload], Awaitable[str]] | None = None,
+        version: int | Literal["latest"] = "latest",
+        scorer: Callable[[str, Any], float | Awaitable[float]] | None = None,
+        metadata: Mapping[str, Any] | None = None, run_id: str | None = None, tag: str | None = None,
+        test_ids: Iterable[int] | None = None,
+    ) -> builtins.list[Evaluation]:
+        """Await provider calls and optional asynchronous scoring outside SQLite transactions."""
+        if (generate is None) == (generate_messages is None):
+            raise ValueError("Provide exactly one of generate and generate_messages")
+        prompt, tests, identifier, metadata_json = self._prepare_test_run(
+            name, version, tag, model, test_ids, metadata, run_id, scorer is not None,
+        )
+
+        if generate_messages is not None:
+            rendered_messages = [prompt.render_messages(test.input) for test in tests]
+            calls = (generate_messages(messages) for messages in rendered_messages)
+        else:
+            assert generate is not None
+            rendered = [prompt.render(test.input) for test in tests]
+            calls = (generate(text) for text in rendered)
+        results = []
+        for test, response in zip(tests, calls):
+            output = await response
+            if not isinstance(output, str):
+                raise ValueError("generate must return a string")
+            value = text_match(output, test.expected) if scorer is None else scorer(output, test.expected)
+            score = await value if isawaitable(value) else value
+            results.append((test.id, output, number(score, 1, "score")))
+        return self._record_test_run(name, prompt.version, model, results, metadata_json, identifier)
 
     @staticmethod
     def _eval_filter(
         name: str, version: int | None, model: str | None, since: datetime | None,
         until: datetime | None, test_id: int | None, run_id: str | None,
-    ) -> tuple[str, list[Any]]:
+    ) -> tuple[str, builtins.list[Any]]:
         conditions = ["name = ?"]
         params: list[Any] = [label(name, "name")]
         if version is not None:
@@ -525,7 +592,7 @@ class PromptDB:
         self, name: str, *, version: int | None = None, model: str | None = None,
         since: datetime | None = None, until: datetime | None = None, test_id: int | None = None,
         run_id: str | None = None,
-    ) -> list[Evaluation]:
+    ) -> builtins.list[Evaluation]:
         """List runs with optional filters, using the time interval [since, until)."""
         where, params = self._eval_filter(name, version, model, since, until, test_id, run_id)
         rows = self._conn.execute(
