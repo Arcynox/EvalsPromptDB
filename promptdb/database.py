@@ -9,6 +9,7 @@ from datetime import datetime
 from io import StringIO
 from math import fsum
 from os import PathLike, link
+from os.path import lexists
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal
@@ -73,12 +74,16 @@ class PromptDB:
 
     def __init__(
         self, path: str | PathLike[str] = "prompts.db", *, create: bool = True, timeout: float = 15.0,
+        read_only: bool = False,
     ) -> None:
-        if create:
-            database = path
+        self._read_only = read_only
+        uri = read_only or not create
+        if uri:
+            mode = "ro" if read_only else "rw"
+            database = Path(path).absolute().as_uri() + f"?mode={mode}"
         else:
-            database = Path(path).absolute().as_uri() + "?mode=rw"
-        self._conn = _connect(database, uri=not create, timeout=timeout)
+            database = path
+        self._conn = _connect(database, uri=uri, timeout=timeout)
         self._conn.row_factory = sqlite3.Row
         try:
             self._conn.execute("PRAGMA foreign_keys = ON")
@@ -96,8 +101,14 @@ class PromptDB:
     def close(self) -> None:
         self._conn.close()
 
+    def _require_writable(self) -> None:
+        if self._read_only:
+            raise PermissionError("The database is open in read-only mode")
+
     @contextmanager
     def _transaction(self, *, write: bool = False) -> Iterator[None]:
+        if write:
+            self._require_writable()
         self._conn.execute("BEGIN IMMEDIATE" if write else "BEGIN")
         try:
             yield
@@ -123,8 +134,10 @@ class PromptDB:
             version = self._schema_version()
             if version == SCHEMA_VERSION:
                 return
-        if not version and not create:
+        if not version and (not create or self._read_only):
             raise ValueError("The SQLite file is not a PromptDB database")
+        if self._read_only:
+            raise ValueError(f"Schema {version} needs a writable connection to migrate to {SCHEMA_VERSION}")
 
         with self._transaction(write=True):
             version = self._schema_version()
@@ -143,6 +156,14 @@ class PromptDB:
                 self._conn.execute(f"PRAGMA application_id = {APPLICATION_ID}")
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
+    def check(self) -> tuple[str, ...]:
+        """Report SQLite integrity and foreign-key violations in one read snapshot."""
+        with self._transaction():
+            issues = [message for (message,) in self._conn.execute("PRAGMA integrity_check") if message != "ok"]
+            for table, row_id, parent, key in self._conn.execute("PRAGMA foreign_key_check"):
+                issues.append(f"{table} row {row_id}: foreign key {key} references missing row in {parent}")
+        return tuple(issues)
+
     def backup(self, destination: str | PathLike[str]) -> Path:
         """Write a standalone SQLite snapshot to a new file without overwriting it."""
         destination = Path(destination).absolute()
@@ -155,6 +176,10 @@ class PromptDB:
                     self._conn.execute("PRAGMA schema_version").fetchone()
                     self._conn.backup(target)
                 target.execute("PRAGMA journal_mode = DELETE").fetchone()
+            for suffix in ("-journal", "-wal", "-shm"):
+                sidecar = str(destination) + suffix
+                if lexists(sidecar):
+                    raise FileExistsError(f"SQLite sidecar exists at the backup destination: {sidecar}")
             link(snapshot, destination)
         return destination
 
@@ -368,6 +393,7 @@ class PromptDB:
         metadata: Mapping[str, Any] | None = None, run_id: str | None = None,
     ) -> list[Evaluation]:
         """Run all saved cases through a caller-supplied generator and record them as a batch."""
+        self._require_writable()
         label(model, "model")
         run_id = uuid4().hex if run_id is None else label(run_id, "run_id")
         metadata_json = json_object({} if metadata is None else metadata, "metadata")

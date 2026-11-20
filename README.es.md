@@ -161,6 +161,16 @@ promptdb --db prompts-copia.db history pais
 
 La API equivalente es `db.backup("prompts-copia.db")`. Abrí la copia directamente para usarla. Usá una instancia de `PromptDB` por hilo. Configurá el tiempo de espera ante bloqueos con `PromptDB("prompts.db", timeout=30)` en segundos. Pasá `create=False` para exigir una base existente o `PromptDB(":memory:")` para usar una base temporal.
 
+Usá `PromptDB("prompts.db", read_only=True)` o `promptdb --read-only` para abrir una base existente con el esquema actual en solo lectura. Esa conexión permite consultar, comparar, exportar y respaldar. `db.check()` informa problemas de integridad o de claves foráneas.
+
+```bash
+promptdb --db vacia.db init
+promptdb --db prompts.db --read-only check
+promptdb --db prompts.db --read-only export --output snapshot.json
+```
+
+`export --output` crea un archivo UTF-8 nuevo y conserva cualquier archivo existente en esa ruta. La CLI usa UTF-8 para prompts y JSON en pipes, e `import` admite snapshots UTF-8 con BOM.
+
 ## Ejemplos de proveedores
 
 Corré primero el inicio rápido en Python. Desde el directorio del proyecto, `python -m examples.evaluate` ejecuta casos guardados sobre varias versiones con un identificador de corrida compartido. Admite Ollama, OpenAI, Anthropic y una función determinista de mayúsculas para pruebas sin conexión.

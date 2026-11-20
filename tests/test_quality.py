@@ -59,6 +59,11 @@ class QualityTests(unittest.TestCase):
                     VALUES ('test', 1, 0.75, 'legacy', '{}', '2026-05-01T00:00:00+00:00')
                 """)
 
+            with self.assertRaisesRegex(ValueError, "writable connection"):
+                PromptDB(path, read_only=True)
+            with closing(sqlite3.connect(path)) as raw:
+                self.assertEqual(raw.execute("PRAGMA user_version").fetchone()[0], 1)
+
             def read(_):
                 with PromptDB(path, create=False) as db:
                     return db.list_evals("test")

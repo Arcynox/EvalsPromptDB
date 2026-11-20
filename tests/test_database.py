@@ -5,6 +5,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import Mock
 
 from promptdb import PromptDB
 
@@ -133,6 +134,47 @@ class PromptDBTests(unittest.TestCase):
                 self.assertEqual(db.get("saludo"), saved)
                 with self.assertRaises(sqlite3.OperationalError):
                     db.save("saludo", "Otra versión")
+
+    def test_read_only_rejects_writes_before_calling_a_generator(self):
+        with self.assertRaises(sqlite3.OperationalError):
+            PromptDB(self.path, read_only=True)
+        self.assertFalse(self.path.exists())
+        with PromptDB(self.path) as db:
+            prompt = db.save("saludo", "Hola {{nombre}}")
+            db.add_test("saludo", input={"nombre": "Luigi"}, expected="Hola Luigi")
+
+        with PromptDB(self.path, read_only=True) as db:
+            self.assertEqual(db.get("saludo"), prompt)
+            self.assertEqual(db.check(), ())
+            generator = Mock(return_value="Hola Luigi")
+            with self.assertRaisesRegex(PermissionError, "read-only"):
+                db.run_tests("saludo", model="demo", generate=generator)
+            generator.assert_not_called()
+            with self.assertRaises(PermissionError):
+                db.delete("saludo", 1)
+            destination = self.path.with_name("copy.db")
+            db.backup(destination)
+            with PromptDB(destination, read_only=True) as copied:
+                self.assertEqual(copied.get("saludo"), prompt)
+
+    def test_integrity_reports_orphans_and_backup_refuses_an_existing_sidecar(self):
+        with PromptDB(self.path) as db:
+            self.assertEqual(db.check(), ())
+            destination = self.path.with_name("dest.db")
+            sidecar = destination.with_suffix(".db-wal")
+            sidecar.write_bytes(b"existing WAL")
+            with self.assertRaisesRegex(FileExistsError, "sidecar"):
+                db.backup(destination)
+            self.assertEqual(sidecar.read_bytes(), b"existing WAL")
+            self.assertFalse(destination.exists())
+
+        with closing(sqlite3.connect(self.path)) as raw, raw:
+            raw.execute("PRAGMA foreign_keys = OFF")
+            raw.execute("INSERT INTO test_cases(name, input, expected, created_at) VALUES (?, ?, ?, ?)",
+                        ("missing", "{}", '"expected"', "2026-01-01T00:00:00+00:00"))
+        with PromptDB(self.path, read_only=True) as db:
+            self.assertEqual(len(db.check()), 1)
+            self.assertIn("test_cases row 1", db.check()[0])
 
     def test_backup_copies_wal_changes_and_never_overwrites(self):
         destination = self.path.with_name("backup.db")

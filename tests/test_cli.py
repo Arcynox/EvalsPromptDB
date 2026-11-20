@@ -72,6 +72,33 @@ class CommandLineTests(unittest.TestCase):
                 self.assertFalse(self.database.exists())
                 self.assertFalse(destination.exists())
 
+    def test_read_only_storage_commands_and_portable_snapshot_file(self):
+        self.cli("init")
+        self.cli("save", "saludo", "--template", "Hola, Córdoba")
+        status = self.cli("--read-only", "check")
+        self.assertEqual(json.loads(status.stdout), {"ok": True, "issues": []})
+        snapshot = self.database.with_name("snapshot.json")
+        self.cli("--read-only", "export", "--output", str(snapshot))
+        payload = snapshot.read_bytes()
+        self.assertIn("Córdoba".encode(), payload)
+        self.cli("export", "--output", str(snapshot), status=1)
+        self.assertEqual(snapshot.read_bytes(), payload)
+        self.assertIn("read-only", self.cli("--read-only", "save", "saludo", "--template", "Adiós", status=1).stderr)
+
+        self.database = self.database.with_name("restored.db")
+        snapshot.write_bytes(b"\xef\xbb\xbf" + payload)
+        self.cli("import", str(snapshot))
+        self.assertEqual(self.cli("get", "saludo").stdout, "Hola, Córdoba")
+
+    def test_utf8_pipes_preserve_prompt_bytes_under_a_legacy_console_encoding(self):
+        command = [sys.executable, "-m", "promptdb", "--db", str(self.database)]
+        env = {**os.environ, "PYTHONIOENCODING": "ascii", "PYTHONUTF8": "0"}
+        content = "Córdoba 🌎\r\n{{saludo}}\r\n".encode("utf-8")
+        subprocess.run([*command, "save", "template", "--from-file", "-"], input=content,
+                       capture_output=True, timeout=30, check=True, env=env)
+        result = subprocess.check_output([*command, "get", "template"], timeout=30, env=env)
+        self.assertEqual(result, content)
+
     def test_from_file_preserves_template_and_render_errors_are_readable(self):
         source = self.database.with_name("plantilla.txt")
         self.cli("save", "saludo", "--from-file", str(source), status=1)

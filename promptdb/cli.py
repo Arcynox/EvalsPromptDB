@@ -6,8 +6,9 @@ from collections.abc import Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 from math import isclose
+from os import open as open_fd
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from ._version import __version__
 from .database import PromptDB
@@ -43,7 +44,34 @@ def _json_default(value: Any) -> Any:
 
 
 def _print_json(value: Any) -> None:
-    print(json.dumps(value, ensure_ascii=False, indent=2, default=_json_default))
+    _write_utf8(json.dumps(value, ensure_ascii=False, indent=2, default=_json_default) + "\n")
+
+
+def _write_utf8(text: str, stream: TextIO | None = None) -> None:
+    stream = sys.stdout if stream is None else stream
+    buffer = getattr(stream, "buffer", None)
+    if buffer is None:
+        stream.write(text)
+    else:
+        buffer.write(text.encode("utf-8"))
+
+
+def _read_utf8(source: str) -> str:
+    if source == "-":
+        buffer = getattr(sys.stdin, "buffer", None)
+        return sys.stdin.read() if buffer is None else buffer.read().decode("utf-8")
+    with Path(source).open(encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
+def _export_file(destination: Path, payload: str) -> None:
+    target = open(destination, "xb", opener=lambda path, flags: open_fd(path, flags, 0o600))
+    try:
+        with target:
+            target.write(payload.encode("utf-8"))
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
 
 
 def _print_comparison(comparison: Comparison) -> None:
@@ -59,12 +87,12 @@ def _print_comparison(comparison: Comparison) -> None:
             "-" if row.paired is None else f"{row.paired.delta:+.3f} ({row.paired.case_count})",
         ))
     widths = [max(map(len, column)) for column in zip(*rows)]
-    print(f"{comparison.name}  (base v{comparison.base_version}, {len(comparison.tests)} test cases)")
+    _write_utf8(f"{comparison.name}  (base v{comparison.base_version}, {len(comparison.tests)} test cases)\n")
     for row in rows:
-        print("  ".join(value.ljust(width) for value, width in zip(row, widths)).rstrip())
+        _write_utf8("  ".join(value.ljust(width) for value, width in zip(row, widths)).rstrip() + "\n")
     for row in comparison.versions:
         if row.diff:
-            print(f"\n{row.diff}", end="")
+            _write_utf8(f"\n{row.diff}")
 
 
 def _add_eval_filters(command: argparse.ArgumentParser) -> None:
@@ -79,7 +107,10 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="promptdb", description="Store and compare LLM prompts locally")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--db", type=Path, default="prompts.db", help="SQLite file (default: prompts.db)")
+    parser.add_argument("--read-only", action="store_true", help="open an existing database without writes or migrations")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("init", help="initialize an empty database")
+    commands.add_parser("check", help="verify SQLite integrity and foreign keys")
 
     save = commands.add_parser("save", help="save a new prompt version")
     save.add_argument("name")
@@ -122,7 +153,8 @@ def _parser() -> argparse.ArgumentParser:
 
     backup = commands.add_parser("backup", help="copy this database to a new SQLite file")
     backup.add_argument("destination", type=Path)
-    commands.add_parser("export", help="write a deterministic JSON snapshot to stdout")
+    export = commands.add_parser("export", help="write a deterministic UTF-8 JSON snapshot")
+    export.add_argument("--output", type=Path, help="write to a new file instead of stdout")
     restore = commands.add_parser("import", help="restore JSON into a new or unused database")
     restore.add_argument("source", help="UTF-8 snapshot path, or - for stdin")
 
@@ -159,15 +191,6 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _read_template(args: argparse.Namespace) -> str:
-    if args.template is not None:
-        return args.template
-    if args.from_file == "-":
-        return sys.stdin.read()
-    with Path(args.from_file).open(encoding="utf-8", newline="") as source:
-        return source.read()
-
-
 def _check_quality(comparison: Comparison, args: argparse.Namespace) -> int:
     candidate = comparison.versions[-1]
     version = f"v{candidate.prompt.version}"
@@ -198,22 +221,28 @@ def _check_quality(comparison: Comparison, args: argparse.Namespace) -> int:
         ):
             errors.append(f"{version} paired score dropped by {-paired.delta:.3g}, above {args.max_regression:g}")
     for error in errors:
-        print(f"promptdb: {error}", file=sys.stderr)
+        _write_utf8(f"promptdb: {error}\n", sys.stderr)
     return 3 if errors else 0
 
 
 def _run(db: PromptDB, args: argparse.Namespace) -> int:
     match args.command:
+        case "init":
+            return 0
+        case "check":
+            issues = db.check()
+            _print_json({"ok": not issues, "issues": issues})
+            return 1 if issues else 0
         case "save":
             prompt = db.save(args.name, args.template, version=args.version, model=args.model,
                              temperature=args.temperature, tags=args.tag, metadata=args.metadata)
-            print(f"{prompt.name}@{prompt.version}")
+            _write_utf8(f"{prompt.name}@{prompt.version}\n")
         case "get":
             prompt = db.get(args.name, args.version, tag=args.tag)
             if args.json:
                 _print_json(prompt)
             else:
-                sys.stdout.write(prompt.template if args.input is None else prompt.render(args.input))
+                _write_utf8(prompt.template if args.input is None else prompt.render(args.input))
         case "list":
             _print_json(db.list(tags=args.tag))
         case "history":
@@ -225,9 +254,13 @@ def _run(db: PromptDB, args: argparse.Namespace) -> int:
         case "delete":
             db.delete(args.name, args.version)
         case "backup":
-            print(db.backup(args.destination))
+            _write_utf8(f"{db.backup(args.destination)}\n")
         case "export":
-            sys.stdout.buffer.write(db.export_json().encode("utf-8"))
+            payload = db.export_json()
+            if args.output is None:
+                _write_utf8(payload)
+            else:
+                _export_file(args.output, payload)
         case "import":
             db.import_json(args.payload)
         case "add-test":
@@ -261,14 +294,15 @@ def _run(db: PromptDB, args: argparse.Namespace) -> int:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        if args.command == "save":
-            args.template = _read_template(args)
+        if args.read_only and args.command == "init":
+            raise PermissionError("init requires a writable database")
+        if args.command == "save" and args.from_file is not None:
+            args.template = _read_utf8(args.from_file)
         if args.command == "import":
-            args.payload = (sys.stdin.buffer.read().decode("utf-8") if args.source == "-"
-                            else Path(args.source).read_text(encoding="utf-8"))
-        with PromptDB(args.db, create=args.command in {"save", "import"}) as db:
+            args.payload = _read_utf8(args.source).removeprefix("\ufeff")
+        with PromptDB(args.db, create=args.command in {"init", "save", "import"}, read_only=args.read_only) as db:
             return _run(db, args)
     except (KeyError, OSError, ValueError, sqlite3.Error) as error:
         detail = error.args[0] if isinstance(error, KeyError) else str(error)
-        print(f"promptdb: {detail}", file=sys.stderr)
+        _write_utf8(f"promptdb: {detail}\n", sys.stderr)
         return 1

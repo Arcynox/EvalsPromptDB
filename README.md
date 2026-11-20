@@ -161,6 +161,16 @@ promptdb --db prompts-copy.db history country
 
 The equivalent API is `db.backup("prompts-copy.db")`. Open the copied file directly to use it. Use a separate `PromptDB` instance per thread. Set `PromptDB("prompts.db", timeout=30)` to configure the lock wait in seconds. Set `create=False` to require an existing database, or use `PromptDB(":memory:")` for a temporary database.
 
+Use `PromptDB("prompts.db", read_only=True)` or `promptdb --read-only` for an existing, current-schema database that should stay untouched. Reads, comparisons, exports, and backups can use that connection. `db.check()` returns SQLite integrity and foreign-key findings.
+
+```bash
+promptdb --db empty.db init
+promptdb --db prompts.db --read-only check
+promptdb --db prompts.db --read-only export --output snapshot.json
+```
+
+`export --output` creates a new UTF-8 file without replacing an existing path. The CLI also uses UTF-8 for prompt and JSON pipes, and `import` accepts snapshots with a UTF-8 BOM.
+
 ## Provider examples
 
 Run the Python quickstart first. From the checkout, `python -m examples.evaluate` runs saved cases over any number of versions with one shared run ID. It supports Ollama, OpenAI, Anthropic, and a deterministic uppercase function for offline tests.
