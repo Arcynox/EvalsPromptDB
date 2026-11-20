@@ -1,15 +1,27 @@
-<img src="assets/evals-promptdb.png" width="112" height="112" alt="Icono de Evals PromptDB">
+<div align="center">
+  <img src="assets/evals-promptdb.png" width="128" height="128" alt="Icono de Evals PromptDB">
+  <h1>Evals PromptDB</h1>
+  <p><strong>Prompts de LLM versionados y evaluaciones en SQLite local.</strong></p>
+  <p>
+    <a href="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml"><img src="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml/badge.svg" alt="Estado de CI en GitHub Actions"></a>
+    <a href="#instalación"><img src="https://img.shields.io/badge/Python-3.10%2B-6d4aff" alt="Python 3.10 o posterior"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/Licencia-MIT-27896d" alt="Licencia MIT"></a>
+  </p>
+  <p>
+    <a href="README.md">English</a> · <a href="#instalación">Instalación</a> · <a href="#inicio-rápido-en-python">Inicio en Python</a> · <a href="#inicio-rápido-en-la-terminal">Inicio en la CLI</a> · <a href="#ejemplos-de-proveedores">Proveedores</a>
+  </p>
+</div>
 
-# Evals PromptDB
+Guardá plantillas, casos, salidas y puntuaciones en un archivo `.db`. Usá la API de Python en tu aplicación o la CLI en scripts y CI. El núcleo usa la biblioteca estándar de Python.
 
-[Read in English](README.md)
+## Flujo de trabajo
 
-Evals PromptDB es una base de datos SQLite embebida para versionar prompts de LLM y guardar sus evaluaciones. Reúne plantillas, casos de prueba, salidas y puntuaciones en un archivo local. Usá la biblioteca Python en tu aplicación o la CLI en scripts y CI. El núcleo usa la biblioteca estándar de Python.
-
-- Guardá versiones inmutables y elegí la activa por etiqueta. Hacé rollback moviendo la etiqueta a una versión anterior.
-- Ejecutá los mismos casos sobre distintas versiones con el generador y la función de evaluación que elijas.
-- Compará cambios en el texto, las variables y las puntuaciones por caso. Exigí puntuación, cobertura y límites de regresión en CI.
-- Exportá JSON determinista para Git o transferí una copia de seguridad consistente de SQLite.
+| Paso | Qué podés hacer |
+| --- | --- |
+| **Versionar** | Guardá plantillas inmutables y elegí la versión activa por etiqueta. |
+| **Evaluar** | Ejecutá los mismos casos sobre varias versiones con el generador y la función de puntuación que elijas. |
+| **Comparar y promover** | Revisá diffs, puntuaciones y cobertura. Aplicá controles en CI y hacé rollback moviendo la etiqueta. |
+| **Compartir** | Versioná JSON determinista en Git o transferí una copia consistente de SQLite. |
 
 ## Instalación
 
@@ -78,6 +90,17 @@ promptdb --db cli.db eval pais --version 2 --model demo --run-id demo-1 --test-i
 promptdb --db cli.db compare pais 1 2 --model demo --run-id demo-1 --min-score 0.85 --min-coverage 1 --max-regression 0.02
 promptdb --db cli.db promote pais 2
 ```
+
+<details>
+<summary>Ejemplo de salida de la comparación</summary>
+
+```text
+Version  Variables  Added  Removed  Evals  Avg score  Cases  Case avg  Paired delta
+1        ciudad     -      -        1      0.830      1/1    0.830     -
+2        ciudad     -      -        1      0.870      1/1    0.870     +0.040 (1)
+```
+
+</details>
 
 Usá `save --from-file plantilla.txt` para leer una plantilla de varias líneas en UTF-8 y `--from-file -` para leer de la entrada estándar. `get --json` devuelve el registro completo, `get --input` aplica los valores a la plantilla y `compare --json` devuelve la comparación en un formato apto para scripts. Ejecutá `promptdb --help` para ver todos los comandos.
 

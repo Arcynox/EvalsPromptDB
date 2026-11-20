@@ -1,15 +1,27 @@
-<img src="assets/evals-promptdb.png" width="112" height="112" alt="Evals PromptDB icon">
+<div align="center">
+  <img src="assets/evals-promptdb.png" width="128" height="128" alt="Evals PromptDB icon">
+  <h1>Evals PromptDB</h1>
+  <p><strong>Local SQLite storage for versioned LLM prompts and evaluations.</strong></p>
+  <p>
+    <a href="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml"><img src="https://github.com/Arcynox/EvalsPromptDB/actions/workflows/ci.yml/badge.svg" alt="GitHub Actions CI status"></a>
+    <a href="#install"><img src="https://img.shields.io/badge/Python-3.10%2B-6d4aff" alt="Python 3.10 and later"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-27896d" alt="MIT license"></a>
+  </p>
+  <p>
+    <a href="README.es.md">Español</a> · <a href="#install">Install</a> · <a href="#quickstart-in-python">Python quickstart</a> · <a href="#quickstart-in-the-terminal">CLI quickstart</a> · <a href="#provider-examples">Providers</a>
+  </p>
+</div>
 
-# Evals PromptDB
+Keep templates, test cases, model outputs, and scores in one `.db` file. Use the Python API in your application or the CLI in scripts and CI. The core uses the Python standard library.
 
-[Leer en español](README.es.md)
+## Prompt workflow
 
-Evals PromptDB is an embedded SQLite database for versioned LLM prompts and evaluation results. Keep templates, test cases, model outputs, and scores together in a local file. Use the Python library in your application or the CLI in a script or CI job. The core uses the Python standard library.
-
-- Save immutable versions and select the current one by tag. Roll back by moving the tag to an earlier version.
-- Run the same cases against different versions with a generator and scorer you supply.
-- Compare template diffs, variable changes, and case-level scores. Gate releases on score, coverage, and regressions.
-- Export deterministic JSON for Git or transfer a consistent SQLite backup.
+| Step | What you can do |
+| --- | --- |
+| **Version** | Save immutable templates and select the active version by tag. |
+| **Evaluate** | Run the same cases across versions with a generator and scorer you supply. |
+| **Compare and promote** | Inspect diffs, scores, and coverage. Gate promotion in CI and roll back by moving the tag. |
+| **Share** | Track deterministic JSON in Git or transfer a consistent SQLite backup. |
 
 ## Install
 
@@ -78,6 +90,17 @@ promptdb --db cli.db eval country --version 2 --model demo --run-id demo-1 --tes
 promptdb --db cli.db compare country 1 2 --model demo --run-id demo-1 --min-score 0.85 --min-coverage 1 --max-regression 0.02
 promptdb --db cli.db promote country 2 --tag production
 ```
+
+<details>
+<summary>Example comparison output</summary>
+
+```text
+Version  Variables  Added  Removed  Evals  Avg score  Cases  Case avg  Paired delta
+1        city       -      -        1      0.830      1/1    0.830     -
+2        city       -      -        1      0.870      1/1    0.870     +0.040 (1)
+```
+
+</details>
 
 Use `save --from-file template.txt` for a multiline UTF-8 template and `--from-file -` for standard input. Use `get --json` for a full record, `get --input` for a rendered template, and `compare --json` for a machine-readable comparison. For the full command list, run `promptdb --help`.
 
