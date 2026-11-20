@@ -18,14 +18,14 @@ from ._values import (
 )
 
 FORMAT = "evals-promptdb"
-FORMAT_VERSION = 3
+FORMAT_VERSION = 4
 
 # Foreign-key dependencies determine import order. Each order-by key is unique.
 TABLES = (
     ("prompt_names", "name last_version", "name"),
     ("prompts", "name version template variables model temperature metadata created_at kind", "name, version"),
     ("tags", "name version tag", "name, version, tag"),
-    ("test_cases", "id name input expected created_at", "id"),
+    ("test_cases", "id name input expected created_at archived_at", "id"),
     ("evaluations", "id name version score model test_id output metadata created_at run_id", "id"),
 )
 JSON_COLUMNS = {
@@ -118,6 +118,8 @@ def _row_values(table: str, columns: list[str], record: Any) -> tuple[Any, ...]:
         case "test_cases":
             row["input"] = json_object(row["input"], "input")
             row["expected"] = json_value(row["expected"])
+            if row.get("archived_at") is not None:
+                row["archived_at"] = timestamp(datetime.fromisoformat(row["archived_at"]))
         case "evaluations":
             row["score"] = number(row["score"], 1, "score")
             label(row["model"], "model")
@@ -140,6 +142,8 @@ def restore(connection: sqlite3.Connection, snapshot: dict[str, Any]) -> None:
         columns = fields.split()
         if table == "prompts" and snapshot["version"] < 3:
             columns.remove("kind")
+        if table == "test_cases" and snapshot["version"] < 4:
+            columns.remove("archived_at")
         if table == "evaluations" and snapshot["version"] == 1:
             columns.remove("run_id")
         names = ", ".join(columns)

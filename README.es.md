@@ -153,7 +153,9 @@ Un control fallido devuelve `3`, incluso cuando faltan puntuaciones o casos requ
 | `list(tags=())` y `history(name)` | Listan versiones. El filtro exige todas las etiquetas solicitadas. El historial va de la versión más antigua a la más reciente. |
 | `set_tags(name, version, tags)` | Reemplaza las etiquetas de una versión. El equivalente en CLI es `tag`. |
 | `promote(name, version, tag="produccion")` | Mueve una etiqueta a una sola versión del prompt en una transacción. |
-| `add_test(name, input=..., expected=...)` y `list_tests(name)` | Guardan y consultan casos compartidos por todas las versiones de un prompt. |
+| `add_test(name, input=..., expected=...)` y `list_tests(name)` | Guardan casos compartidos por todas las versiones de un prompt y listan los casos activos. |
+| `get_test(name, test_id)` | Lee un caso por su identificador, incluidos los casos archivados. |
+| `set_test_archived(name, test_id, archived=True)` y `replace_test(...)` | Permiten actualizar la suite activa y seguir consultando el caso anterior y sus evaluaciones. |
 | `add_eval(name, version=..., score=..., model=..., ...)` | Registra una puntuación y admite `test_id`, `run_id`, `output`, `metadata` y la fecha original `created_at`. |
 | `run_tests(name, model=..., generate=..., ...)` | Aplica las variables, llama a `generate(texto)` y registra todos los resultados en una transacción. Admite `version`, `scorer`, `metadata` y `run_id`. |
 | `compare(name, versions=None, ...)` y `list_evals(name, ...)` | Consultan evaluaciones guardadas con filtros por corrida, modelo, caso y fecha. |
@@ -161,9 +163,13 @@ Un control fallido devuelve `3`, incluso cuando faltan puntuaciones o casos requ
 
 Los marcadores como `{{ciudad}}` y `{{ ciudad }}` se detectan en orden de aparición. Si pasás `variables` de forma explícita, usá el mismo conjunto que en la plantilla. Los números aumentan por nombre, incluso después de borrar una versión. Para editar una plantilla o su configuración, guardá una versión nueva.
 
-Usá un `datetime` con zona horaria para `created_at`, `since` y `until`. La CLI acepta fechas ISO 8601 con desplazamiento, como `2026-11-12T10:00:00-03:00`. Los intervalos incluyen `since` y excluyen `until`. La primera versión solicitada es la base del diff. `resultado.best` devuelve la de mayor promedio y, en caso de empate, respeta el orden de comparación. Las versiones sin evaluaciones coincidentes tienen promedio `None`. Usá el mismo modelo y un conjunto consistente de casos cuando la puntuación decida un paso de CI.
+Usá un `datetime` con zona horaria para `created_at`, `since` y `until`. La CLI acepta fechas ISO 8601 con desplazamiento, como `2026-11-12T10:00:00-03:00`. Los intervalos incluyen `since` y excluyen `until`. La primera versión solicitada es la base del diff. `resultado.best` devuelve la versión con mayor `average_score` de los registros que coinciden y, en caso de empate, respeta el orden de comparación. Las versiones sin evaluaciones coincidentes tienen promedio `None`. Usá el mismo modelo y un conjunto consistente de casos cuando la puntuación decida un paso de CI.
 
 Una tanda toma la versión y los casos visibles al inicio. Las llamadas al modelo y la puntuación ocurren fuera de la transacción de SQLite. Si falla la sustitución de variables, el generador, la evaluación o la escritura, la tanda no deja resultados parciales. `run_tests()` asigna un identificador por defecto. Pasá el mismo `run_id` a la base y la candidata cuando las evalúes juntas.
+
+### Mantenimiento de casos de prueba
+
+Usá `archive-test` para retirar un caso o `restore-test` para volver a activarlo. Con `replace-test NOMBRE ID --input ... --expected ...`, archivás el caso anterior y creás uno nuevo con su propio identificador en una transacción. `get-test` y `evals` siguen mostrando el caso original y sus puntuaciones. `run_tests`, `tests` y `compare` usan los casos activos por defecto. Para una auditoría, usá `include_archived=True` en `list_tests()` o `compare()`, o `--include-archived` en `tests` o `compare`.
 
 ## Snapshots JSON y copias de seguridad SQLite
 
@@ -177,7 +183,7 @@ promptdb --db restaurada.db history pais
 
 El snapshot incluye plantillas, metadata, etiquetas, entradas, valores esperados, salidas, fechas, identificadores y contadores de versión. El mismo estado produce el mismo JSON en UTF-8. La importación requiere una base nueva o sin uso y valida el snapshot completo en una transacción. Usá `db.export_json()` para obtener el texto y `db.import_json(payload)` para restaurarlo desde Python.
 
-El formato JSON se identifica con `format: "evals-promptdb"` y `version: 3`. Los mensajes de chat se representan como arrays JSON en los snapshots. La importación admite los formatos 1 y 2. Podés guardar el snapshot en Git e importarlo a un archivo SQLite nuevo en CI.
+El formato JSON se identifica con `format: "evals-promptdb"` y `version: 4`. Guarda los mensajes de chat como arrays JSON y conserva el estado de los casos archivados. La importación también admite los formatos 1 a 3. Podés guardar el snapshot en Git e importarlo a un archivo SQLite nuevo en CI.
 
 Usá una copia de seguridad SQLite si necesitás un archivo de base de datos listo para abrir. Otras conexiones pueden seguir usando el archivo original. Elegí un archivo nuevo en un directorio existente cuyo sistema de archivos admita enlaces duros.
 

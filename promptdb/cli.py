@@ -103,6 +103,11 @@ def _add_eval_filters(command: argparse.ArgumentParser) -> None:
     command.add_argument("--until", type=_date_arg, help="exclusive ISO 8601 timestamp")
 
 
+def _add_test_fields(command: argparse.ArgumentParser) -> None:
+    command.add_argument("--input", type=_object_arg, required=True)
+    command.add_argument("--expected", type=json.loads, required=True, help="expected output as JSON")
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="promptdb", description="Store and compare LLM prompts locally")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -161,9 +166,19 @@ def _parser() -> argparse.ArgumentParser:
 
     test = commands.add_parser("add-test", help="add a test case shared across versions")
     test.add_argument("name")
-    test.add_argument("--input", type=_object_arg, required=True)
-    test.add_argument("--expected", type=json.loads, required=True, help="expected output as JSON")
-    commands.add_parser("tests", help="list test cases").add_argument("name")
+    _add_test_fields(test)
+    tests = commands.add_parser("tests", help="list the active test cases")
+    tests.add_argument("name")
+    tests.add_argument("--include-archived", action="store_true")
+    for action, explanation in (
+        ("get-test", "read a test case by ID"), ("archive-test", "retire a case and keep its scores"),
+        ("restore-test", "make an archived case active"), ("replace-test", "archive a case and add its replacement"),
+    ):
+        command = commands.add_parser(action, help=explanation)
+        command.add_argument("name")
+        command.add_argument("test_id", type=int)
+        if action == "replace-test":
+            _add_test_fields(command)
 
     evaluate = commands.add_parser("eval", help="record an evaluation score")
     evaluate.add_argument("name")
@@ -186,6 +201,7 @@ def _parser() -> argparse.ArgumentParser:
     compare.add_argument("versions", type=int, nargs="*", help="versions, starting with the base")
     _add_eval_filters(compare)
     compare.add_argument("--json", action="store_true")
+    compare.add_argument("--include-archived", action="store_true", help="include archived cases and their scores")
     compare.add_argument("--min-score", type=float, help="exit 3 if the last compared version misses this score")
     compare.add_argument("--min-coverage", type=float, help="required fraction of eligible cases scored")
     compare.add_argument("--max-regression", type=float, help="maximum drop against the base on the same cases")
@@ -267,7 +283,13 @@ def _run(db: PromptDB, args: argparse.Namespace) -> int:
         case "add-test":
             _print_json(db.add_test(args.name, input=args.input, expected=args.expected))
         case "tests":
-            _print_json(db.list_tests(args.name))
+            _print_json(db.list_tests(args.name, include_archived=args.include_archived))
+        case "get-test":
+            _print_json(db.get_test(args.name, args.test_id))
+        case "archive-test" | "restore-test":
+            _print_json(db.set_test_archived(args.name, args.test_id, archived=args.command == "archive-test"))
+        case "replace-test":
+            _print_json(db.replace_test(args.name, args.test_id, input=args.input, expected=args.expected))
         case "eval":
             _print_json(db.add_eval(args.name, version=args.version, score=args.score, model=args.model,
                                     test_id=args.test_id, output=args.output, metadata=args.metadata,
@@ -281,7 +303,8 @@ def _run(db: PromptDB, args: argparse.Namespace) -> int:
                 if value is not None and not 0 <= value <= 1:
                     raise ValueError(f"{flag} must be between 0 and 1")
             comparison = db.compare(args.name, args.versions or None, model=args.model, test_id=args.test_id,
-                                    since=args.since, until=args.until, run_id=args.run_id)
+                                    since=args.since, until=args.until, run_id=args.run_id,
+                                    include_archived=args.include_archived)
             if args.max_regression is not None and len(comparison.versions) < 2:
                 raise ValueError("--max-regression requires at least two versions")
             if args.json:

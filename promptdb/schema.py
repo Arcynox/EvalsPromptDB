@@ -1,11 +1,13 @@
 APPLICATION_ID = 0x50524442
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 EVALUATIONS_BY_RUN = "CREATE INDEX evaluations_by_run ON evaluations(name, run_id, version, created_at)"
 PROMPT_KIND = "kind TEXT NOT NULL DEFAULT 'text' CHECK (kind IN ('text', 'chat'))"
+TEST_ARCHIVED_AT = "archived_at TEXT"
 MIGRATIONS = {
     1: ("ALTER TABLE evaluations ADD COLUMN run_id TEXT", EVALUATIONS_BY_RUN),
     2: (f"ALTER TABLE prompts ADD COLUMN {PROMPT_KIND}",),
+    3: (f"ALTER TABLE test_cases ADD COLUMN {TEST_ARCHIVED_AT}",),
 }
 
 SCHEMA = (
@@ -39,13 +41,14 @@ SCHEMA = (
     )
     """,
     "CREATE INDEX tags_by_label ON tags(tag, name, version)",
-    """
+    f"""
     CREATE TABLE test_cases (
         id INTEGER PRIMARY KEY,
         name TEXT NOT NULL REFERENCES prompt_names(name),
         input TEXT NOT NULL,
         expected TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        {TEST_ARCHIVED_AT},
         UNIQUE (name, id)
     )
     """,

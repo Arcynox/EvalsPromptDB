@@ -5,6 +5,7 @@ import json
 import sqlite3
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import closing, contextmanager
+from dataclasses import replace
 from datetime import datetime
 from io import StringIO
 from math import fsum
@@ -350,20 +351,60 @@ class PromptDB:
         expected_json = json_value(expected)
         with self._transaction(write=True):
             self._get(label(name, "name"), "latest")
-            created = timestamp()
-            cursor = self._conn.execute(
-                "INSERT INTO test_cases(name, input, expected, created_at) VALUES (?, ?, ?, ?)",
-                (name, values, expected_json, created),
-            )
-            return TestCase(cursor.lastrowid, name, json.loads(values), json.loads(expected_json),
-                            datetime.fromisoformat(created))
+            return self._insert_test(name, values, expected_json, timestamp())
 
-    def list_tests(self, name: str) -> list[TestCase]:
-        rows = self._conn.execute(
-            "SELECT * FROM test_cases WHERE name = ? ORDER BY id", (label(name, "name"),)
+    def _insert_test(self, name: str, values: str, expected_json: str, created: str) -> TestCase:
+        cursor = self._conn.execute(
+            "INSERT INTO test_cases(name, input, expected, created_at) VALUES (?, ?, ?, ?)",
+            (name, values, expected_json, created),
         )
-        return [TestCase(row["id"], row["name"], json.loads(row["input"]), json.loads(row["expected"]),
-                         datetime.fromisoformat(row["created_at"])) for row in rows]
+        return self.get_test(name, cursor.lastrowid)
+
+    @staticmethod
+    def _test_case(row: sqlite3.Row) -> TestCase:
+        archived = row["archived_at"]
+        return TestCase(row["id"], row["name"], json.loads(row["input"]), json.loads(row["expected"]),
+                        datetime.fromisoformat(row["created_at"]), datetime.fromisoformat(archived) if archived else None)
+
+    def get_test(self, name: str, test_id: int) -> TestCase:
+        """Get an active or archived case by ID and prompt name."""
+        row = self._conn.execute(
+            "SELECT * FROM test_cases WHERE name = ? AND id = ?",
+            (label(name, "name"), positive_integer(test_id, "test_id")),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"No test case {test_id} for prompt {name!r}")
+        return self._test_case(row)
+
+    def list_tests(self, name: str, *, include_archived: bool = False) -> list[TestCase]:
+        """List active cases or include archived cases for an audit."""
+        active = "" if include_archived else " AND archived_at IS NULL"
+        rows = self._conn.execute(
+            f"SELECT * FROM test_cases WHERE name = ?{active} ORDER BY id", (label(name, "name"),)
+        )
+        return [self._test_case(row) for row in rows]
+
+    def set_test_archived(self, name: str, test_id: int, *, archived: bool = True) -> TestCase:
+        """Archive or restore a case without changing its contents or scores."""
+        with self._transaction(write=True):
+            case = self.get_test(name, test_id)
+            if archived == (case.archived_at is not None):
+                return case
+            changed_at = timestamp() if archived else None
+            self._conn.execute("UPDATE test_cases SET archived_at = ? WHERE id = ?", (changed_at, case.id))
+            return replace(case, archived_at=datetime.fromisoformat(changed_at) if changed_at else None)
+
+    def replace_test(self, name: str, test_id: int, *, input: Mapping[str, Any], expected: Any) -> TestCase:
+        """Archive an active case and create its replacement in one transaction."""
+        values = json_object(input, "input")
+        expected_json = json_value(expected)
+        with self._transaction(write=True):
+            case = self.get_test(name, test_id)
+            if case.archived_at is not None:
+                raise ValueError(f"Test case {test_id} is already archived")
+            changed_at = timestamp()
+            self._conn.execute("UPDATE test_cases SET archived_at = ? WHERE id = ?", (changed_at, case.id))
+            return self._insert_test(name, values, expected_json, changed_at)
 
     def add_eval(
         self, name: str, *, version: int, score: float, model: str, test_id: int | None = None,
@@ -499,10 +540,13 @@ class PromptDB:
     def compare(
         self, name: str, versions: Iterable[int] | None = None, *, model: str | None = None,
         since: datetime | None = None, until: datetime | None = None, test_id: int | None = None,
-        run_id: str | None = None,
+        run_id: str | None = None, include_archived: bool = False,
     ) -> Comparison:
         """Compare templates against the first requested version and summarize stored scores."""
         where, params = self._eval_filter(name, None, model, since, until, test_id, run_id)
+        if not include_archived:
+            where += """ AND NOT EXISTS (SELECT 1 FROM test_cases c
+                              WHERE c.id = evaluations.test_id AND c.archived_at IS NOT NULL)"""
         with self._transaction():
             if versions is None:
                 versions = (row[0] for row in self._conn.execute(
@@ -514,7 +558,7 @@ class PromptDB:
             if not prompts:
                 raise ValueError(f"No versions to compare for {name!r}")
             base = prompts[0]
-            tests = tuple(self.list_tests(name))
+            tests = tuple(self.list_tests(name, include_archived=include_archived))
             eligible_test_count = len(tests) if test_id is None else int(any(test.id == test_id for test in tests))
             statistics = {
                 version: (count, average) for version, count, average in self._conn.execute(

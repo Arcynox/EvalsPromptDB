@@ -109,6 +109,25 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(json.loads(rendered.stdout)[1], {"role": "user", "content": "Hola Córdoba"})
         self.assertEqual(json.loads(self.cli("get", "saludo", "--json").stdout)["messages"], messages)
 
+    def test_cli_lifecycle_preserves_evaluation_history(self):
+        with PromptDB(self.database) as db:
+            db.save("suite", "{{word}}")
+            old = db.add_test("suite", input={"word": "old"}, expected="OLD")
+            db.add_eval("suite", version=1, model="demo", test_id=old.id, score=1)
+        replaced = self.cli("replace-test", "suite", str(old.id), "--input", '{"word":"new"}',
+                            "--expected", '"NEW"')
+        new_id = str(json.loads(replaced.stdout)["id"])
+        self.assertIsNotNone(json.loads(self.cli("get-test", "suite", str(old.id)).stdout)["archived_at"])
+        self.assertEqual(len(json.loads(self.cli("tests", "suite", "--include-archived").stdout)), 2)
+        new_report = json.loads(self.cli("compare", "suite", "--json").stdout)
+        all_report = json.loads(self.cli("compare", "suite", "--json", "--include-archived").stdout)
+        self.assertEqual(new_report["versions"][0]["coverage"], 0)
+        self.assertEqual(all_report["versions"][0]["coverage"], 0.5)
+        self.cli("archive-test", "suite", new_id)
+        self.assertEqual(json.loads(self.cli("tests", "suite").stdout), [])
+        self.cli("restore-test", "suite", str(old.id))
+        self.assertEqual(json.loads(self.cli("tests", "suite").stdout)[0]["id"], old.id)
+
     def test_from_file_preserves_template_and_render_errors_are_readable(self):
         source = self.database.with_name("plantilla.txt")
         self.cli("save", "saludo", "--from-file", str(source), status=1)

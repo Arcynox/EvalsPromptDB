@@ -61,6 +61,7 @@ class TestCase:
     input: dict[str, Any]
     expected: Any
     created_at: datetime
+    archived_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,6 @@ class Comparison:
 
     @property
     def best(self) -> VersionComparison | None:
-        """Return the highest-scoring version, using comparison order for ties."""
+        """Return the version with the highest row average, using comparison order for ties."""
         scored = (row for row in self.versions if row.average_score is not None)
         return max(scored, key=lambda row: row.average_score, default=None)

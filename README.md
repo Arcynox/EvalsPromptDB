@@ -153,7 +153,9 @@ A failed gate returns status `3`, including when required scores or cases are mi
 | `list(tags=())` and `history(name)` | List versions. Filtering by tags requires every requested tag. History orders versions from oldest to newest. |
 | `set_tags(name, version, tags)` | Replaces tags on one version. The CLI equivalent is `tag`. |
 | `promote(name, version, tag="produccion")` | Moves a tag to exactly one version of that prompt in a single transaction. |
-| `add_test(name, input=..., expected=...)` and `list_tests(name)` | Store and retrieve cases shared by all versions of a prompt. |
+| `add_test(name, input=..., expected=...)` and `list_tests(name)` | Store cases shared by all versions of a prompt and list the active cases. |
+| `get_test(name, test_id)` | Read a case by ID, including an archived case. |
+| `set_test_archived(name, test_id, archived=True)` and `replace_test(...)` | Manage the active suite while keeping the previous case and its evaluations available. |
 | `add_eval(name, version=..., score=..., model=..., ...)` | Records a score and optionally `test_id`, `run_id`, `output`, `metadata`, and an existing `created_at`. |
 | `run_tests(name, model=..., generate=..., ...)` | Renders all cases, calls `generate(rendered_text)`, and stores the scored results in one transaction. Accepts `version`, `scorer`, `metadata`, and `run_id`. |
 | `compare(name, versions=None, ...)` and `list_evals(name, ...)` | Read stored evaluations with filters for run ID, model, case, and date. |
@@ -161,9 +163,13 @@ A failed gate returns status `3`, including when required scores or cases are mi
 
 Placeholder names such as `{{city}}` and `{{ city }}` are detected in first-use order. If you pass `variables` explicitly, use the same set as in the template. Version numbers increase per name, including after deletion. Templates and model settings are immutable once saved. Use a new version for edits.
 
-Pass an aware `datetime` for `created_at`, `since`, and `until`. The CLI accepts ISO 8601 timestamps with offsets, such as `2026-11-12T10:00:00-03:00`. Time windows include `since` and exclude `until`. The comparison uses the first requested version as the base of the diff. `report.best` returns the highest scored version and uses comparison order to break ties. Versions without matching runs have an average of `None`. Compare the same model and a consistent set of cases when using a score as a gate.
+Pass an aware `datetime` for `created_at`, `since`, and `until`. The CLI accepts ISO 8601 timestamps with offsets, such as `2026-11-12T10:00:00-03:00`. Time windows include `since` and exclude `until`. The comparison uses the first requested version as the base of the diff. `report.best` uses the highest `average_score` across matching rows and breaks ties in comparison order. Versions without matching runs have an average of `None`. Compare the same model and a consistent set of cases when using a score as a gate.
 
 A batch starts from the prompt and cases visible at the beginning of the run. Model calls and scoring happen outside the SQLite transaction. If rendering, generation, scoring, or persistence fails, the batch leaves no partial results. `run_tests()` assigns an ID to the batch by default. Pass the same `run_id` to the baseline and candidate when evaluating them together.
+
+### Maintaining test cases
+
+Use `archive-test` to retire a case or `restore-test` to make it active again. Use `replace-test NAME ID --input ... --expected ...` to archive the old case and create a new case with its own ID in one transaction. `get-test` and `evals` still show the original case and scores. By default, `run_tests`, `tests`, and `compare` use active cases. Pass `include_archived=True` to `list_tests()` or `compare()`, or `--include-archived` to `tests` or `compare`, to include archived cases in an audit.
 
 ## JSON snapshots and SQLite backups
 
@@ -177,7 +183,7 @@ promptdb --db restored.db history country
 
 The snapshot includes templates, metadata, tags, inputs, expected values, outputs, dates, IDs, and version counters. The same database state produces the same UTF-8 JSON. Import requires a new or unused database and validates the complete snapshot in one transaction. Use `db.export_json()` to get a string and `db.import_json(payload)` to restore it from Python.
 
-The JSON format is identified by `format: "evals-promptdb"` and `version: 3`. Chat messages are stored as JSON arrays in snapshots. Imports accept formats 1 and 2. You can check a snapshot into Git and import it into a new SQLite file in CI.
+The JSON format is identified by `format: "evals-promptdb"` and `version: 4`. It stores chat messages as JSON arrays and preserves which cases are archived. Imports also accept formats 1–3. You can check a snapshot into Git and import it into a new SQLite file in CI.
 
 Use SQLite backup when you want a standalone database file. The source can be open in other connections. The destination must be a new path in an existing directory on a filesystem that supports hard links.
 
