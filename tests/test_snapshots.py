@@ -83,3 +83,14 @@ class SnapshotTests(unittest.TestCase):
             target.import_json(json.dumps(snapshot))
             self.assertEqual(target.list_evals("test"), [legacy])
             self.assertEqual(json.loads(target.export_json())["version"], FORMAT_VERSION)
+
+    def test_imports_chat_snapshots_from_before_case_archival(self):
+        with PromptDB(":memory:") as source, PromptDB(":memory:") as target:
+            saved = source.save("chat", messages=[{"role": "user", "content": "Hi {{name}}"}])
+            fixture = source.add_test("chat", input={"name": "Luigi"}, expected="Hi Luigi")
+            snapshot = json.loads(source.export_json())
+            snapshot["version"] = 3
+            del snapshot["test_cases"][0]["archived_at"]
+            target.import_json(json.dumps(snapshot))
+            self.assertEqual(target.get("chat"), saved)
+            self.assertEqual(target.list_tests("chat"), [fixture])

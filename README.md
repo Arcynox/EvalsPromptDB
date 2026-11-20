@@ -260,7 +260,7 @@ Run the test suite with the standard library.
 python -m unittest discover -s tests -v
 ```
 
-GitHub Actions defines a test matrix for Python 3.10 to 3.14 on Linux and Python 3.14 on macOS and Windows. To build and check a source distribution and wheel locally, use the packaging tools below.
+GitHub Actions tests CPython 3.10–3.15 and PyPy 3.11 on Linux, CPython 3.10 and 3.15 on Windows, and CPython 3.15 on macOS. The wheel includes type annotations for consumers and has no required third-party runtime dependencies. Use the packaging tools below to build and check the distributions locally.
 
 ```bash
 python -m pip install build twine

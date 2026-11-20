@@ -1,5 +1,15 @@
 # Historial de cambios
 
+## 1.2.0
+
+- Prompts de chat con mensajes de texto ordenados, variables por mensaje y ejemplos para Ollama, OpenAI, Anthropic y servidores compatibles con Chat Completions.
+- Evaluaciones síncronas y asíncronas con selección por etiqueta y subconjuntos de casos. Las esperas del proveedor quedan fuera de las transacciones SQLite.
+- Archivado, reactivación y reemplazo de casos con historial de evaluaciones. La cobertura usa los casos activos por defecto.
+- Evaluadores de texto y JSON estructural. La CLI acepta salidas de otro proceso por archivo o stdin.
+- Modo de solo lectura, comprobación de integridad, exportación a archivo y E/S UTF-8 en la CLI.
+- Migraciones transaccionales al esquema SQLite 4. El formato de snapshot 4 acepta importaciones de los formatos anteriores.
+- Tipos incluidos en el wheel y matriz de CI ampliada para CPython 3.15 y PyPy 3.11.
+
 ## 1.1.0
 
 - Puntuaciones por caso, cobertura y comparación sobre los casos compartidos por la versión base y la candidata.

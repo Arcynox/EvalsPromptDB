@@ -23,8 +23,12 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
     "Topic :: Database",
     "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
 ]
 
 [project.scripts]
@@ -37,6 +41,9 @@ Issues = "https://github.com/Arcynox/EvalsPromptDB/issues"
 
 [tool.setuptools]
 packages = ["promptdb"]
+
+[tool.setuptools.package-data]
+promptdb = ["py.typed"]
 
 [tool.setuptools.dynamic]
 version = {attr = "promptdb._version.__version__"}

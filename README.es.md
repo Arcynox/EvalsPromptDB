@@ -260,7 +260,7 @@ Corré las pruebas con la biblioteca estándar.
 python -m unittest discover -s tests -v
 ```
 
-GitHub Actions define una matriz para Python 3.10 a 3.14 en Linux y Python 3.14 en macOS y Windows. Para construir y revisar el código fuente empaquetado y el wheel, usá estas herramientas de empaquetado.
+GitHub Actions ejecuta pruebas en CPython 3.10 a 3.15 y PyPy 3.11 en Linux, CPython 3.10 y 3.15 en Windows, y CPython 3.15 en macOS. El wheel incluye anotaciones de tipos y funciona sin dependencias externas obligatorias. Usá estas herramientas para construir y revisar las distribuciones en local.
 
 ```bash
 python -m pip install build twine
