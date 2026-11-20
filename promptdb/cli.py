@@ -5,6 +5,7 @@ import sys
 from collections.abc import Sequence
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
+from math import isclose
 from pathlib import Path
 from typing import Any
 
@@ -46,13 +47,16 @@ def _print_json(value: Any) -> None:
 
 
 def _print_comparison(comparison: Comparison) -> None:
-    headers = ("Version", "Variables", "Added", "Removed", "Evals", "Avg score")
+    headers = ("Version", "Variables", "Added", "Removed", "Evals", "Avg score", "Cases", "Case avg", "Paired delta")
     rows = [headers]
     for row in comparison.versions:
         rows.append((
             str(row.prompt.version), ", ".join(row.prompt.variables) or "-",
             ", ".join(row.added_variables) or "-", ", ".join(row.removed_variables) or "-",
             str(row.evaluation_count), "-" if row.average_score is None else f"{row.average_score:.3f}",
+            f"{len(row.case_scores)}/{comparison.eligible_test_count}",
+            "-" if row.case_average_score is None else f"{row.case_average_score:.3f}",
+            "-" if row.paired is None else f"{row.paired.delta:+.3f} ({row.paired.case_count})",
         ))
     widths = [max(map(len, column)) for column in zip(*rows)]
     print(f"{comparison.name}  (base v{comparison.base_version}, {len(comparison.tests)} test cases)")
@@ -66,6 +70,7 @@ def _print_comparison(comparison: Comparison) -> None:
 def _add_eval_filters(command: argparse.ArgumentParser) -> None:
     command.add_argument("--model")
     command.add_argument("--test-id", type=int)
+    command.add_argument("--run-id", help="only evaluations recorded under this run ID")
     command.add_argument("--since", type=_date_arg, help="inclusive ISO 8601 timestamp")
     command.add_argument("--until", type=_date_arg, help="exclusive ISO 8601 timestamp")
 
@@ -133,6 +138,7 @@ def _parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--score", type=float, required=True)
     evaluate.add_argument("--model", required=True)
     evaluate.add_argument("--test-id", type=int)
+    evaluate.add_argument("--run-id")
     evaluate.add_argument("--output")
     evaluate.add_argument("--metadata", type=_object_arg)
     evaluate.add_argument("--created-at", type=_date_arg, help="ISO 8601 time of an existing run")
@@ -148,6 +154,8 @@ def _parser() -> argparse.ArgumentParser:
     _add_eval_filters(compare)
     compare.add_argument("--json", action="store_true")
     compare.add_argument("--min-score", type=float, help="exit 3 if the last compared version misses this score")
+    compare.add_argument("--min-coverage", type=float, help="required fraction of eligible cases scored")
+    compare.add_argument("--max-regression", type=float, help="maximum drop against the base on the same cases")
     return parser
 
 
@@ -158,6 +166,40 @@ def _read_template(args: argparse.Namespace) -> str:
         return sys.stdin.read()
     with Path(args.from_file).open(encoding="utf-8", newline="") as source:
         return source.read()
+
+
+def _check_quality(comparison: Comparison, args: argparse.Namespace) -> int:
+    candidate = comparison.versions[-1]
+    version = f"v{candidate.prompt.version}"
+    errors = []
+    if args.min_score is not None:
+        track_cases = args.min_coverage is not None or args.max_regression is not None
+        average = candidate.case_average_score if track_cases else candidate.average_score
+        metric = "case average" if track_cases else "average"
+        if average is None:
+            missing = "case evaluations" if track_cases else "evaluations"
+            errors.append(f"{version} has no matching {missing}")
+        elif average < args.min_score:
+            errors.append(f"{version} {metric} {average:g} is below {args.min_score:g}")
+    if args.min_coverage is not None:
+        if candidate.coverage is None:
+            errors.append(f"{version} has no eligible test cases")
+        elif candidate.coverage < args.min_coverage:
+            errors.append(f"{version} coverage {candidate.coverage:.1%} is below {args.min_coverage:.1%}")
+    if args.max_regression is not None:
+        paired = candidate.paired
+        required = 1.0 if args.min_coverage is None else args.min_coverage
+        if paired is None:
+            errors.append(f"{version} has no scored cases in common with v{comparison.base_version}")
+        elif paired.coverage < required:
+            errors.append(f"{version} paired coverage {paired.coverage:.1%} is below {required:.1%}")
+        elif -paired.delta > args.max_regression and not isclose(
+            -paired.delta, args.max_regression, rel_tol=0.0, abs_tol=1e-12,
+        ):
+            errors.append(f"{version} paired score dropped by {-paired.delta:.3g}, above {args.max_regression:g}")
+    for error in errors:
+        print(f"promptdb: {error}", file=sys.stderr)
+    return 3 if errors else 0
 
 
 def _run(db: PromptDB, args: argparse.Namespace) -> int:
@@ -195,28 +237,24 @@ def _run(db: PromptDB, args: argparse.Namespace) -> int:
         case "eval":
             _print_json(db.add_eval(args.name, version=args.version, score=args.score, model=args.model,
                                     test_id=args.test_id, output=args.output, metadata=args.metadata,
-                                    created_at=args.created_at))
+                                    created_at=args.created_at, run_id=args.run_id))
         case "evals":
             _print_json(db.list_evals(args.name, version=args.version, model=args.model, test_id=args.test_id,
-                                      since=args.since, until=args.until))
+                                      since=args.since, until=args.until, run_id=args.run_id))
         case "compare":
-            if args.min_score is not None and not 0 <= args.min_score <= 1:
-                raise ValueError("--min-score must be between 0 and 1")
+            for flag, value in (("--min-score", args.min_score), ("--min-coverage", args.min_coverage),
+                                ("--max-regression", args.max_regression)):
+                if value is not None and not 0 <= value <= 1:
+                    raise ValueError(f"{flag} must be between 0 and 1")
             comparison = db.compare(args.name, args.versions or None, model=args.model, test_id=args.test_id,
-                                    since=args.since, until=args.until)
+                                    since=args.since, until=args.until, run_id=args.run_id)
+            if args.max_regression is not None and len(comparison.versions) < 2:
+                raise ValueError("--max-regression requires at least two versions")
             if args.json:
                 _print_json(comparison)
             else:
                 _print_comparison(comparison)
-            if args.min_score is not None:
-                candidate = comparison.versions[-1]
-                if candidate.average_score is None:
-                    print(f"promptdb: v{candidate.prompt.version} has no matching evaluations", file=sys.stderr)
-                    return 3
-                if candidate.average_score < args.min_score:
-                    print(f"promptdb: v{candidate.prompt.version} average {candidate.average_score:g} "
-                          f"is below {args.min_score:g}", file=sys.stderr)
-                    return 3
+            return _check_quality(comparison, args)
     return 0
 
 

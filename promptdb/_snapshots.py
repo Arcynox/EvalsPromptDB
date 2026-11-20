@@ -15,7 +15,7 @@ from ._values import (
 )
 
 FORMAT = "evals-promptdb"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 # Foreign-key dependencies determine import order. Each order-by key is unique.
 TABLES = (
@@ -23,7 +23,7 @@ TABLES = (
     ("prompts", "name version template variables model temperature metadata created_at", "name, version"),
     ("tags", "name version tag", "name, version, tag"),
     ("test_cases", "id name input expected created_at", "id"),
-    ("evaluations", "id name version score model test_id output metadata created_at", "id"),
+    ("evaluations", "id name version score model test_id output metadata created_at run_id", "id"),
 )
 JSON_COLUMNS = {
     "prompts": ("variables", "metadata"),
@@ -63,7 +63,8 @@ def decode(payload: str) -> dict[str, Any]:
     keys = {"format", "version", "last_evaluation_id", *(table for table, _, _ in TABLES)}
     if not isinstance(snapshot, dict) or snapshot.keys() != keys:
         raise ValueError("Invalid snapshot structure")
-    if snapshot["format"] != FORMAT or type(snapshot["version"]) is not int or snapshot["version"] != FORMAT_VERSION:
+    version = snapshot["version"]
+    if snapshot["format"] != FORMAT or type(version) is not int or not 1 <= version <= FORMAT_VERSION:
         raise ValueError("Unsupported snapshot format or version")
     last_eval = snapshot["last_evaluation_id"]
     if type(last_eval) is not int or not 0 <= last_eval <= 2**63 - 1:
@@ -107,6 +108,8 @@ def _row_values(table: str, columns: list[str], record: Any) -> tuple[Any, ...]:
             label(row["model"], "model")
             if row["test_id"] is not None:
                 positive_integer(row["test_id"], "test_id")
+            if row.get("run_id") is not None:
+                label(row["run_id"], "run_id")
             evaluation_output(row["output"])
 
     return tuple(row[column] for column in columns)
@@ -120,6 +123,8 @@ def restore(connection: sqlite3.Connection, snapshot: dict[str, Any]) -> None:
         if not isinstance(records, list):
             raise ValueError(f"{table} must be an array")
         columns = fields.split()
+        if table == "evaluations" and snapshot["version"] == 1:
+            columns.remove("run_id")
         names = ", ".join(columns)
         parameters = ", ".join("?" for _ in columns)
         insert = f"INSERT INTO {table} ({names}) VALUES ({parameters})"

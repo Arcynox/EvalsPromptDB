@@ -1,4 +1,6 @@
 include CHANGELOG.md
 include README.es.md
 include assets/evals-promptdb.png
+include examples/*.py
 include tests/test_*.py
+include tests/fixtures/schema-v1.sql

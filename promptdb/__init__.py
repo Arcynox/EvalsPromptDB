@@ -2,11 +2,21 @@
 
 from ._version import __version__
 from .database import PromptDB
-from .records import Comparison, Evaluation, Prompt, TestCase, VersionComparison
+from .records import (
+    CaseScore,
+    Comparison,
+    Evaluation,
+    PairedScore,
+    Prompt,
+    TestCase,
+    VersionComparison,
+)
 
 __all__ = [
+    "CaseScore",
     "Comparison",
     "Evaluation",
+    "PairedScore",
     "Prompt",
     "PromptDB",
     "TestCase",

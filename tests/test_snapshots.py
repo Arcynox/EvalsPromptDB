@@ -12,7 +12,8 @@ class SnapshotTests(unittest.TestCase):
             removed = source.save("résumé", "Revisado", version=3)
             case = source.add_test("résumé", input={"título": "Córdoba"}, expected={"output": "Córdoba"})
             run = source.add_eval("résumé", version=1, score=.8, model="local", test_id=case.id,
-                                  output="Córdoba", created_at=datetime(2026, 5, 4, tzinfo=timezone.utc))
+                                  output="Córdoba", created_at=datetime(2026, 5, 4, tzinfo=timezone.utc),
+                                  run_id="smoke-2026")
             deleted_run = source.add_eval("résumé", version=removed.version, score=.5, model="local")
             source.delete("résumé", removed.version)
             snapshot = source.export_json()
@@ -67,5 +68,16 @@ class SnapshotTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unsupported snapshot"):
                 db.import_json(json.dumps(future))
             with self.assertRaisesRegex(ValueError, "Duplicate field"):
-                db.import_json(snapshot.replace('"version": 1', '"version": 1, "version": 1'))
+                db.import_json(snapshot.replace('"format":', '"format": null, "format":'))
             self.assertEqual(db.export_json(), snapshot)
+
+    def test_imports_version_one_snapshots_without_run_ids(self):
+        with PromptDB(":memory:") as source, PromptDB(":memory:") as target:
+            source.save("test", "Hello")
+            legacy = source.add_eval("test", version=1, score=0.9, model="old-model")
+            snapshot = json.loads(source.export_json())
+            snapshot["version"] = 1
+            del snapshot["evaluations"][0]["run_id"]
+            target.import_json(json.dumps(snapshot))
+            self.assertEqual(target.list_evals("test"), [legacy])
+            self.assertEqual(json.loads(target.export_json())["version"], 2)

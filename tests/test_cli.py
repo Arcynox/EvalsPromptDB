@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from promptdb import __version__
+from promptdb import PromptDB, __version__
 
 
 class CommandLineTests(unittest.TestCase):
@@ -100,3 +100,29 @@ class CommandLineTests(unittest.TestCase):
         self.cli("import", "-", stdin=payload)
         self.assertEqual(self.cli("export").stdout, payload)
         self.cli("import", "-", stdin=payload, status=1)
+
+    def test_quality_gate_cannot_pass_with_old_or_unlinked_scores(self):
+        with PromptDB(self.database) as db:
+            db.save("quality", "{{word}}")
+            db.save("quality", "{{ word }}")
+            first = db.add_test("quality", input={"word": "one"}, expected="ONE")
+            second = db.add_test("quality", input={"word": "two"}, expected="TWO")
+            db.add_eval("quality", version=1, test_id=first.id, score=1, model="local", run_id="this-ci")
+            db.add_eval("quality", version=2, test_id=first.id, score=1, model="local", run_id="this-ci")
+            db.add_eval("quality", version=2, test_id=second.id, score=1, model="local", run_id="previous-ci")
+            db.add_eval("quality", version=2, score=1, model="local", run_id="this-ci")
+
+            command = ("compare", "quality", "1", "2", "--model", "local", "--run-id", "this-ci")
+            incomplete = self.cli(*command, "--min-score", "0.9", "--min-coverage", "1", status=3)
+            self.assertIn("coverage 50.0% is below 100.0%", incomplete.stderr)
+            db.add_eval("quality", version=2, test_id=second.id, score=.4, model="local", run_id="this-ci")
+            low = self.cli(*command, "--min-score", "0.75", "--min-coverage", "1", status=3)
+            self.assertIn("case average 0.7 is below 0.75", low.stderr)
+            unmatched = self.cli(*command, "--max-regression", "0.1", status=3)
+            self.assertIn("paired coverage 50.0% is below 100.0%", unmatched.stderr)
+
+            db.add_eval("quality", version=1, test_id=second.id, score=.9, model="local", run_id="this-ci")
+            regressed = self.cli(*command, "--min-coverage", "1", "--max-regression", "0.1", status=3)
+            self.assertIn("paired score dropped by 0.25", regressed.stderr)
+            result = self.cli(*command, "--min-coverage", "1", "--max-regression", "0.25", "--json")
+            self.assertEqual(json.loads(result.stdout)["versions"][-1]["paired"]["case_count"], 2)

@@ -103,7 +103,7 @@ class PromptDBTests(unittest.TestCase):
 
     def test_concurrent_saves_allocate_distinct_versions(self):
         def save(index):
-            with PromptDB(self.path) as db:
+            with PromptDB(self.path, timeout=60) as db:
                 return db.save("concurrente", f"Prompt {index}").version
 
         with ThreadPoolExecutor(max_workers=6) as pool:
@@ -169,6 +169,8 @@ class PromptDBTests(unittest.TestCase):
             self.assertEqual([run.test_id for run in runs], [madrid.id, cordoba.id])
             self.assertEqual([run.score for run in runs], [1.0, 1.0])
             self.assertEqual({run.created_at for run in runs}, {runs[0].created_at})
+            self.assertTrue(runs[0].run_id)
+            self.assertEqual({run.run_id for run in runs}, {runs[0].run_id})
             self.assertEqual(db.list_evals("echo", version=first.version), runs)
 
             db.save("json", "{{city}}")

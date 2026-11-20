@@ -7,10 +7,12 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from datetime import datetime
 from io import StringIO
+from math import fsum
 from os import PathLike, link
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Literal
+from uuid import uuid4
 
 from . import _snapshots
 from ._values import (
@@ -24,8 +26,16 @@ from ._values import (
     template_variables,
     timestamp,
 )
-from .records import Comparison, Evaluation, Prompt, TestCase, VersionComparison
-from .schema import APPLICATION_ID, SCHEMA, SCHEMA_VERSION
+from .records import (
+    CaseScore,
+    Comparison,
+    Evaluation,
+    PairedScore,
+    Prompt,
+    TestCase,
+    VersionComparison,
+)
+from .schema import APPLICATION_ID, MIGRATIONS, SCHEMA, SCHEMA_VERSION
 
 
 def _connect(path: str | PathLike[str], *, uri: bool = False, timeout: float = 15.0) -> sqlite3.Connection:
@@ -44,6 +54,18 @@ def _diff(base: Prompt, target: Prompt) -> str:
         line if line.endswith("\n") else f"{line}\n\\ No newline at end of file\n"
         for line in lines
     )
+
+
+def _paired_score(
+    baseline: dict[int, CaseScore], candidate: dict[int, CaseScore], eligible_test_count: int,
+) -> PairedScore | None:
+    shared = baseline.keys() & candidate.keys()
+    if not shared:
+        return None
+    count = len(shared)
+    before = fsum(baseline[test_id].average_score for test_id in shared) / count
+    after = fsum(candidate[test_id].average_score for test_id in shared) / count
+    return PairedScore(count, count / eligible_test_count, before, after, after - before)
 
 
 class PromptDB:
@@ -85,33 +107,40 @@ class PromptDB:
                 self._conn.execute("ROLLBACK")
             raise
 
-    def _has_schema(self) -> bool:
+    def _schema_version(self) -> int:
         application_id = self._conn.execute("PRAGMA application_id").fetchone()[0]
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if application_id == APPLICATION_ID:
-            if version != SCHEMA_VERSION:
+            if not 1 <= version <= SCHEMA_VERSION:
                 raise ValueError(f"Unsupported PromptDB schema version: {version}")
-            return True
+            return version
         if application_id or version:
             raise ValueError("The SQLite file belongs to a different application")
-        return False
+        return 0
 
     def _initialize(self, create: bool) -> None:
         with self._transaction():
-            if self._has_schema():
+            version = self._schema_version()
+            if version == SCHEMA_VERSION:
                 return
-        if not create:
+        if not version and not create:
             raise ValueError("The SQLite file is not a PromptDB database")
 
         with self._transaction(write=True):
-            if self._has_schema():
+            version = self._schema_version()
+            if version == SCHEMA_VERSION:
                 return
-            existing_schema = self._conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
-            if existing_schema is not None:
-                raise ValueError("The SQLite file belongs to a different application")
-            for statement in SCHEMA:
-                self._conn.execute(statement)
-            self._conn.execute(f"PRAGMA application_id = {APPLICATION_ID}")
+            if version:
+                for previous in range(version, SCHEMA_VERSION):
+                    for statement in MIGRATIONS[previous]:
+                        self._conn.execute(statement)
+            else:
+                existing_schema = self._conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone()
+                if existing_schema is not None:
+                    raise ValueError("The SQLite file belongs to a different application")
+                for statement in SCHEMA:
+                    self._conn.execute(statement)
+                self._conn.execute(f"PRAGMA application_id = {APPLICATION_ID}")
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     def backup(self, destination: str | PathLike[str]) -> Path:
@@ -297,13 +326,15 @@ class PromptDB:
     def add_eval(
         self, name: str, *, version: int, score: float, model: str, test_id: int | None = None,
         output: str | None = None, metadata: Mapping[str, Any] | None = None,
-        created_at: datetime | None = None,
+        created_at: datetime | None = None, run_id: str | None = None,
     ) -> Evaluation:
         """Record a score between 0 and 1, optionally linked to a test case."""
         label(name, "name")
         positive_integer(version, "version")
         score = number(score, 1, "score")
         label(model, "model")
+        if run_id is not None:
+            label(run_id, "run_id")
         evaluation_output(output)
         metadata_json = json_object({} if metadata is None else metadata, "metadata")
         with self._transaction(write=True):
@@ -316,28 +347,29 @@ class PromptDB:
                 if case is None:
                     raise KeyError(f"No test case {test_id} for prompt {name!r}")
             return self._insert_eval(name, version, score, model, test_id, output, metadata_json,
-                                     timestamp(created_at))
+                                     timestamp(created_at), run_id)
 
     def _insert_eval(
         self, name: str, version: int, score: float, model: str, test_id: int | None,
-        output: str | None, metadata: str, created_at: str,
+        output: str | None, metadata: str, created_at: str, run_id: str | None,
     ) -> Evaluation:
         cursor = self._conn.execute(
             """INSERT INTO evaluations
-               (name, version, score, model, test_id, output, metadata, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (name, version, score, model, test_id, output, metadata, created_at),
+               (name, version, score, model, test_id, output, metadata, created_at, run_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (name, version, score, model, test_id, output, metadata, created_at, run_id),
         )
         return Evaluation(cursor.lastrowid, name, version, score, model, test_id, output,
-                          json.loads(metadata), datetime.fromisoformat(created_at))
+                          json.loads(metadata), datetime.fromisoformat(created_at), run_id)
 
     def run_tests(
         self, name: str, *, model: str, generate: Callable[[str], str],
         version: int | Literal["latest"] = "latest", scorer: Callable[[str, Any], float] | None = None,
-        metadata: Mapping[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None, run_id: str | None = None,
     ) -> list[Evaluation]:
         """Run all saved cases through a caller-supplied generator and record them as a batch."""
         label(model, "model")
+        run_id = uuid4().hex if run_id is None else label(run_id, "run_id")
         metadata_json = json_object({} if metadata is None else metadata, "metadata")
         with self._transaction():
             prompt = self._get(label(name, "name"), version)
@@ -361,14 +393,14 @@ class PromptDB:
         with self._transaction(write=True):
             self._get(name, prompt.version)
             return [
-                self._insert_eval(name, prompt.version, score, model, test_id, output, metadata_json, created)
+                self._insert_eval(name, prompt.version, score, model, test_id, output, metadata_json, created, run_id)
                 for test_id, output, score in results
             ]
 
     @staticmethod
     def _eval_filter(
         name: str, version: int | None, model: str | None, since: datetime | None,
-        until: datetime | None, test_id: int | None,
+        until: datetime | None, test_id: int | None, run_id: str | None,
     ) -> tuple[str, list[Any]]:
         conditions = ["name = ?"]
         params: list[Any] = [label(name, "name")]
@@ -381,6 +413,9 @@ class PromptDB:
         if test_id is not None:
             conditions.append("test_id = ?")
             params.append(positive_integer(test_id, "test_id"))
+        if run_id is not None:
+            conditions.append("run_id = ?")
+            params.append(label(run_id, "run_id"))
         start = timestamp(since) if since is not None else None
         end = timestamp(until) if until is not None else None
         if start is not None and end is not None and start >= end:
@@ -396,9 +431,10 @@ class PromptDB:
     def list_evals(
         self, name: str, *, version: int | None = None, model: str | None = None,
         since: datetime | None = None, until: datetime | None = None, test_id: int | None = None,
+        run_id: str | None = None,
     ) -> list[Evaluation]:
         """List runs with optional filters, using the time interval [since, until)."""
-        where, params = self._eval_filter(name, version, model, since, until, test_id)
+        where, params = self._eval_filter(name, version, model, since, until, test_id, run_id)
         rows = self._conn.execute(
             f"SELECT * FROM evaluations WHERE {where} ORDER BY created_at, id", params
         )
@@ -406,14 +442,16 @@ class PromptDB:
             id=row["id"], name=row["name"], version=row["version"], score=row["score"],
             model=row["model"], test_id=row["test_id"], output=row["output"],
             metadata=json.loads(row["metadata"]), created_at=datetime.fromisoformat(row["created_at"]),
+            run_id=row["run_id"],
         ) for row in rows]
 
     def compare(
         self, name: str, versions: Iterable[int] | None = None, *, model: str | None = None,
         since: datetime | None = None, until: datetime | None = None, test_id: int | None = None,
+        run_id: str | None = None,
     ) -> Comparison:
         """Compare templates against the first requested version and summarize stored scores."""
-        where, params = self._eval_filter(name, None, model, since, until, test_id)
+        where, params = self._eval_filter(name, None, model, since, until, test_id, run_id)
         with self._transaction():
             if versions is None:
                 versions = (row[0] for row in self._conn.execute(
@@ -425,19 +463,39 @@ class PromptDB:
             if not prompts:
                 raise ValueError(f"No versions to compare for {name!r}")
             base = prompts[0]
+            tests = tuple(self.list_tests(name))
+            eligible_test_count = len(tests) if test_id is None else int(any(test.id == test_id for test in tests))
             statistics = {
                 version: (count, average) for version, count, average in self._conn.execute(
                     f"SELECT version, COUNT(*), AVG(score) FROM evaluations WHERE {where} GROUP BY version",
                     params,
                 )
             }
+            by_case: dict[int, dict[int, CaseScore]] = {}
+            for version, case_id, count, average in self._conn.execute(
+                f"""SELECT version, test_id, COUNT(*), AVG(score) FROM evaluations
+                    WHERE {where} AND test_id IS NOT NULL
+                    GROUP BY version, test_id ORDER BY version, test_id""", params,
+            ):
+                by_case.setdefault(version, {})[case_id] = CaseScore(case_id, count, average)
+
+            baseline = by_case.get(base.version, {})
             versions_compared = []
             for prompt in prompts:
                 count, average = statistics.get(prompt.version, (0, None))
+                scores = by_case.get(prompt.version, {})
+                case_average = fsum(row.average_score for row in scores.values()) / len(scores) if scores else None
+                paired = None
+                if prompt.version != base.version:
+                    paired = _paired_score(baseline, scores, eligible_test_count)
                 versions_compared.append(VersionComparison(
                     prompt=prompt, diff=_diff(base, prompt),
                     added_variables=tuple(var for var in prompt.variables if var not in base.variables),
                     removed_variables=tuple(var for var in base.variables if var not in prompt.variables),
                     evaluation_count=count, average_score=average,
+                    case_scores=tuple(scores.values()),
+                    coverage=len(scores) / eligible_test_count if eligible_test_count else None,
+                    paired=paired,
+                    case_average_score=case_average,
                 ))
-            return Comparison(name, base.version, tuple(versions_compared), tuple(self.list_tests(name)))
+            return Comparison(name, base.version, tuple(versions_compared), tests, eligible_test_count)

@@ -47,6 +47,23 @@ class Evaluation:
     output: str | None
     metadata: dict[str, Any]
     created_at: datetime
+    run_id: str | None = None
+
+
+@dataclass(frozen=True)
+class CaseScore:
+    test_id: int
+    evaluation_count: int
+    average_score: float
+
+
+@dataclass(frozen=True)
+class PairedScore:
+    case_count: int
+    coverage: float
+    baseline_score: float
+    candidate_score: float
+    delta: float
 
 
 @dataclass(frozen=True)
@@ -57,6 +74,10 @@ class VersionComparison:
     removed_variables: tuple[str, ...]
     evaluation_count: int
     average_score: float | None
+    case_scores: tuple[CaseScore, ...] = ()
+    coverage: float | None = None
+    paired: PairedScore | None = None
+    case_average_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +86,7 @@ class Comparison:
     base_version: int
     versions: tuple[VersionComparison, ...]
     tests: tuple[TestCase, ...]
+    eligible_test_count: int = 0
 
     @property
     def best(self) -> VersionComparison | None:

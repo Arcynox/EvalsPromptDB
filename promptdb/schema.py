@@ -1,5 +1,8 @@
 APPLICATION_ID = 0x50524442
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+EVALUATIONS_BY_RUN = "CREATE INDEX evaluations_by_run ON evaluations(name, run_id, version, created_at)"
+MIGRATIONS = {1: ("ALTER TABLE evaluations ADD COLUMN run_id TEXT", EVALUATIONS_BY_RUN)}
 
 SCHEMA = (
     """
@@ -52,9 +55,11 @@ SCHEMA = (
         output TEXT,
         metadata TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        run_id TEXT,
         FOREIGN KEY (name, version) REFERENCES prompts(name, version) ON DELETE CASCADE,
         FOREIGN KEY (name, test_id) REFERENCES test_cases(name, id)
     )
     """,
     "CREATE INDEX evaluations_by_version ON evaluations(name, version, created_at)",
+    EVALUATIONS_BY_RUN,
 )

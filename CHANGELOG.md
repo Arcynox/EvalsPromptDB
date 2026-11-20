@@ -1,5 +1,13 @@
 # Historial de cambios
 
+## 1.1.0
+
+- Puntuaciones por caso, cobertura y comparación sobre los casos compartidos por la versión base y la candidata.
+- `compare --min-coverage` y `compare --max-regression` para controlar cobertura y regresión en CI.
+- Identificadores de corrida en `run_tests()` y `add_eval()`, con filtro `run_id` en la API y `--run-id` en la CLI.
+- Migración transaccional al esquema SQLite 2. Los snapshots JSON de formato 2 conservan los identificadores de corrida y pueden importar el formato 1.
+- Ejemplo ejecutable con Ollama, OpenAI, Anthropic y un generador determinista sin conexión.
+
 ## 1.0.0
 
 - La distribución pasa a llamarse `evals-promptdb`. El módulo y el comando se llaman `promptdb`.
